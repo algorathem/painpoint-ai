@@ -5,6 +5,9 @@
 
 const ARCTIC = "https://arctic-shift.photon-reddit.com";
 const HN_API = "https://hn.algolia.com/api/v1/search";
+const ITUNES_SEARCH = "https://itunes.apple.com/search";
+const ITUNES_REVIEWS = (id, page = 1, country = "us") =>
+  `https://itunes.apple.com/${country}/rss/customerreviews/page=${page}/id=${id}/sortBy=mostRecent/json`;
 
 const HN_QUERIES = [
   "I wish there was a tool",
@@ -17,6 +20,18 @@ const HN_QUERIES = [
   "alternative to",
   "waste of time SaaS",
   "anyone recommend a tool",
+];
+
+/** @type {{id:number, name:string}[]} */
+const APP_PRESETS = [
+  { id: 618783545, name: "Slack" },
+  { id: 1232780281, name: "Notion" },
+  { id: 1152747299, name: "Figma" },
+  { id: 897446215, name: "Canva" },
+  { id: 6448311069, name: "ChatGPT" },
+  { id: 1113153706, name: "Teams" },
+  { id: 489969512, name: "Asana" },
+  { id: 461504587, name: "Trello" },
 ];
 
 const PRESETS = [
@@ -176,6 +191,10 @@ const DEMO = [
 
 /** @type {Set<string>} */
 const selected = new Set(["SaaS", "Entrepreneur", "startups"]);
+/** @type {Map<number, string>} appId -> name */
+const selectedApps = new Map(
+  APP_PRESETS.slice(0, 4).map((a) => [a.id, a.name])
+);
 
 /** @type {null | object} */
 let lastResult = null;
@@ -414,6 +433,157 @@ function commentToItem(c) {
     created_utc: Number(c.created_utc || 0),
     matched_phrases: phrases,
   };
+}
+
+function renderAppPresets() {
+  const row = $("app-preset-row");
+  if (!row) return;
+  row.innerHTML = "";
+  for (const app of APP_PRESETS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (selectedApps.has(app.id) ? " on" : "");
+    b.textContent = app.name;
+    b.addEventListener("click", () => {
+      if (selectedApps.has(app.id)) selectedApps.delete(app.id);
+      else selectedApps.set(app.id, app.name);
+      renderAppPresets();
+      renderSelectedApps();
+    });
+    row.appendChild(b);
+  }
+}
+
+function renderSelectedApps() {
+  const row = $("selected-apps");
+  if (!row) return;
+  row.innerHTML = "";
+  if (!selectedApps.size) {
+    row.innerHTML = `<span class="empty-inline">No apps selected.</span>`;
+    return;
+  }
+  for (const [id, name] of [...selectedApps.entries()].sort((a, b) =>
+    a[1].localeCompare(b[1])
+  )) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip on";
+    b.innerHTML = `${escapeHtml(name)}<span class="x">×</span>`;
+    b.title = `id ${id}`;
+    b.addEventListener("click", () => {
+      selectedApps.delete(id);
+      renderAppPresets();
+      renderSelectedApps();
+    });
+    row.appendChild(b);
+  }
+}
+
+async function addAppFromInput() {
+  const raw = ($("app-input")?.value || "").trim();
+  if (!raw) return;
+  if (/^\d+$/.test(raw)) {
+    const id = Number(raw);
+    selectedApps.set(id, `App ${id}`);
+    $("app-input").value = "";
+    renderAppPresets();
+    renderSelectedApps();
+    return;
+  }
+  setStatus(`Looking up App Store: ${raw}…`);
+  try {
+    const url = `${ITUNES_SEARCH}?${new URLSearchParams({
+      term: raw,
+      entity: "software",
+      limit: "5",
+      country: "us",
+    })}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`iTunes search ${res.status}`);
+    const data = await res.json();
+    const hit = (data.results || [])[0];
+    if (!hit?.trackId) {
+      setStatus(`No App Store app found for “${raw}”.`, "err");
+      return;
+    }
+    selectedApps.set(Number(hit.trackId), hit.trackName || raw);
+    $("app-input").value = "";
+    renderAppPresets();
+    renderSelectedApps();
+    setStatus(`Added ${hit.trackName} (${hit.trackId}).`, "ok");
+  } catch (e) {
+    setStatus(String(e.message || e), "err");
+  }
+}
+
+async function scanAppStore({ pages = 2 } = {}) {
+  const items = [];
+  const seen = new Set();
+  let scanned = 0;
+  for (const [appId, name] of selectedApps.entries()) {
+    setStatus(`App Store: ${name} reviews…`);
+    setPill("pill-status", "ios", "live");
+    for (let page = 1; page <= pages; page++) {
+      try {
+        const res = await fetch(ITUNES_REVIEWS(appId, page, "us"));
+        if (!res.ok) break;
+        const data = await res.json();
+        let entries = data?.feed?.entry || [];
+        if (!Array.isArray(entries)) entries = entries ? [entries] : [];
+        scanned += entries.length;
+        for (const e of entries) {
+          if (!e["im:rating"]) continue;
+          const rating = Number(e["im:rating"]?.label || 0);
+          const title = (e.title?.label || "").trim();
+          const content = (e.content?.label || "").trim();
+          const blob = `${title}\n${content}`;
+          const phrases = matchPhrases(blob);
+          // Prefer pain: 1–3★ always; 4★ only with pain language; skip empty 5★
+          if (rating >= 5 && content.length < 80 && !phrases.length) continue;
+          if (rating >= 4 && !phrases.length && content.length < 40) continue;
+          if (content.length < 12 && title.length < 8) continue;
+          const rid = e.id?.label || `${appId}-${title.slice(0, 20)}`;
+          const id = `ios-${appId}-${rid}`;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          let link = "";
+          const ln = e.link;
+          if (ln?.attributes?.href) link = ln.attributes.href;
+          else if (Array.isArray(ln) && ln[0]?.attributes?.href)
+            link = ln[0].attributes.href;
+          items.push({
+            id,
+            source: "post",
+            origin: "appstore",
+            subreddit: `appstore/${name.toLowerCase().replace(/\s+/g, "-")}`,
+            title: `(App Store · ${name} · ${rating}★) ${title || content.slice(0, 60)}`,
+            body: content.slice(0, 4000),
+            score: rating,
+            num_comments: 0,
+            url:
+              link ||
+              `https://apps.apple.com/us/app/id${appId}?see-all=reviews`,
+            created_utc: 0,
+            matched_phrases: phrases.length ? phrases : [`${rating}-star review`],
+            author: e.author?.name?.label || "",
+            rating,
+            app_name: name,
+          });
+        }
+      } catch (err) {
+        console.warn("appstore page failed", name, page, err);
+        break;
+      }
+      await sleep(200);
+    }
+  }
+  // critical reviews first
+  items.sort(
+    (a, b) =>
+      (a.rating || a.score || 5) - (b.rating || b.score || 5) ||
+      (b.body || "").length - (a.body || "").length
+  );
+  return { items, scanned };
 }
 
 async function scanArctic(subs, { days, limit, comments }) {
@@ -1077,10 +1247,16 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
 
   // Source breakdown (by origin + subreddit)
   const srcEl = $("source-bars");
-  const originCounts = { reddit: 0, hn: 0, demo: 0, other: 0 };
+  const originCounts = { reddit: 0, hn: 0, appstore: 0, demo: 0, other: 0 };
   const srcCounts = {};
   for (const c of candidates) {
-    const o = c.origin || (c.subreddit === "hn" ? "hn" : "reddit");
+    const o =
+      c.origin ||
+      (String(c.subreddit || "").startsWith("appstore")
+        ? "appstore"
+        : c.subreddit === "hn"
+          ? "hn"
+          : "reddit");
     if (originCounts[o] !== undefined) originCounts[o]++;
     else originCounts.other++;
     const s = c.subreddit || "unknown";
@@ -1094,6 +1270,7 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
     const origins = [
       ["reddit", "Reddit", "var(--accent)"],
       ["hn", "Hacker News", "var(--amber)"],
+      ["appstore", "App Store", "var(--emerald)"],
       ["demo", "Demo", "var(--faint)"],
     ];
     for (const [key, label, color] of origins) {
@@ -1117,7 +1294,12 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
       const pct = Math.round((n / srcTotal) * 100);
       const row = document.createElement("div");
       row.className = "sent-row";
-      const label = sub === "hn" ? "HN" : `r/${sub}`;
+      const label =
+        sub === "hn"
+          ? "HN"
+          : String(sub).startsWith("appstore/")
+            ? sub.replace("appstore/", "iOS/")
+            : `r/${sub}`;
       row.innerHTML = `
         <span class="lbl" style="width:90px">${escapeHtml(label)}</span>
         <div class="bar"><i style="width:${pct}%;background:var(--accent-hover)"></i></div>
@@ -1228,9 +1410,22 @@ function openIdeaDrawer(idea) {
 function openPainDrawer(p) {
   const blob = `${p.title || ""}\n${p.body || ""}`;
   const full = snip(p.body || p.description || p.title || "", 600);
-  const origin = p.origin || (p.subreddit === "hn" ? "hn" : "reddit");
-  const originLabel = origin === "hn" ? "Hacker News" : origin === "demo" ? "Demo" : "Reddit";
+  const origin = p.origin || (p.subreddit === "hn" ? "hn" : String(p.subreddit || "").startsWith("appstore") ? "appstore" : "reddit");
+  const originLabel =
+    origin === "hn"
+      ? "Hacker News"
+      : origin === "appstore"
+        ? "App Store"
+        : origin === "demo"
+          ? "Demo"
+          : "Reddit";
   const primaryUrl = p.url || "";
+  const community =
+    origin === "hn"
+      ? "HN"
+      : origin === "appstore"
+        ? String(p.subreddit || "").replace("appstore/", "")
+        : "r/" + (p.subreddit || "?");
   const body = `
     <div class="drawer-section">
       <h3>What they said</h3>
@@ -1240,8 +1435,8 @@ function openPainDrawer(p) {
       <h3>Snapshot</h3>
       <div class="drawer-kv">
         <div class="box"><div class="k">Source</div><div class="v">${escapeHtml(originLabel)}</div></div>
-        <div class="box"><div class="k">Community</div><div class="v">${origin === "hn" ? "HN" : "r/" + escapeHtml(p.subreddit || "?")}</div></div>
-        <div class="box"><div class="k">Type</div><div class="v">${escapeHtml(p.source || "post")}</div></div>
+        <div class="box"><div class="k">Community / app</div><div class="v">${escapeHtml(community)}</div></div>
+        <div class="box"><div class="k">Type</div><div class="v">${escapeHtml(p.source || "post")}${p.rating ? ` · ${p.rating}★` : ""}</div></div>
         <div class="box"><div class="k">WTP</div><div class="v">${escapeHtml(p.willingness_to_pay || inferWtp(blob))}</div></div>
         <div class="box"><div class="k">Sentiment</div><div class="v">${escapeHtml(p.sentiment || inferSentiment(blob))}</div></div>
         <div class="box"><div class="k">Severity / score</div><div class="v">${p.severity || "—"} / ${p.score || 0}</div></div>
@@ -1258,7 +1453,9 @@ function openPainDrawer(p) {
         ${
           origin === "hn"
             ? `<a class="btn ghost" href="https://hn.algolia.com/?q=${encodeURIComponent(p.title || "")}" target="_blank" rel="noopener">Search HN ↗</a>`
-            : `<a class="btn ghost" href="https://www.reddit.com/r/${escapeAttr(p.subreddit || "SaaS")}/" target="_blank" rel="noopener">Browse r/${escapeHtml(p.subreddit || "SaaS")} ↗</a>
+            : origin === "appstore"
+              ? `<a class="btn ghost" href="https://apps.apple.com/us/search?term=${encodeURIComponent(p.app_name || community)}" target="_blank" rel="noopener">App Store search ↗</a>`
+              : `<a class="btn ghost" href="https://www.reddit.com/r/${escapeAttr(p.subreddit || "SaaS")}/" target="_blank" rel="noopener">Browse r/${escapeHtml(p.subreddit || "SaaS")} ↗</a>
         <a class="btn ghost" href="https://www.reddit.com/search/?q=${encodeURIComponent(p.title || p.description || "")}" target="_blank" rel="noopener">Search similar ↗</a>`
         }
       </div>
@@ -1347,18 +1544,23 @@ async function onRunScan() {
   const useDemo = $("src-demo")?.checked;
   const useArctic = $("src-arctic")?.checked;
   const useHn = $("src-hn")?.checked;
+  const useAppStore = $("src-appstore")?.checked;
 
   if (useDemo) {
     return onRunDemo();
   }
-  if (!useArctic && !useHn) {
-    setStatus("Pick at least one data source (Reddit and/or Hacker News).", "err");
+  if (!useArctic && !useHn && !useAppStore) {
+    setStatus("Pick at least one data source.", "err");
     return;
   }
 
   const subs = [...selected];
   if (useArctic && !subs.length) {
-    setStatus("Select at least one subreddit for the Reddit source (or turn Reddit off).", "err");
+    setStatus("Select at least one subreddit for Reddit (or turn Reddit off).", "err");
+    return;
+  }
+  if (useAppStore && !selectedApps.size) {
+    setStatus("Select at least one App Store app (or turn App Store off).", "err");
     return;
   }
 
@@ -1377,10 +1579,13 @@ async function onRunScan() {
     if (useHn) {
       batches.push(await scanHN({ days, limit }));
     }
+    if (useAppStore) {
+      batches.push(await scanAppStore({ pages: 2 }));
+    }
     const merged = mergeCandidates(batches);
     lastScannedCount = merged.scanned;
     setStatus(
-      `Sources done · scanned ${merged.scanned} · phrase/query hits ${merged.items.length}. Processing…`
+      `Sources done · scanned ${merged.scanned} · hits ${merged.items.length}. Processing…`
     );
     await runPipeline(merged.items, merged.scanned);
   } catch (e) {
@@ -1450,11 +1655,17 @@ function exportMd() {
 function boot() {
   renderPresets();
   renderSelected();
+  renderAppPresets();
+  renderSelectedApps();
   loadLlmSettings();
   updateHeaderPills();
   $("sub-add").addEventListener("click", addSubFromInput);
   $("sub-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") addSubFromInput();
+  });
+  $("app-add")?.addEventListener("click", () => addAppFromInput());
+  $("app-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addAppFromInput();
   });
   $("days").addEventListener("change", updateHeaderPills);
   $("save-llm").addEventListener("click", saveLlmSettings);

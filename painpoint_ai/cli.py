@@ -9,7 +9,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from . import demo_data, hn, llm, reddit_arctic, report
+from . import appstore, demo_data, hn, llm, playstore, reddit_arctic, report
 
 console = Console(stderr=True)
 
@@ -25,7 +25,7 @@ DEFAULT_SUBS = [
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="painpoint-ai",
-        description="Scrape Reddit + HN pain signals → LLM classify → startup ideas",
+        description="Scrape Reddit + HN + app reviews → LLM classify → startup ideas",
     )
     p.add_argument(
         "--subs",
@@ -42,9 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--source",
-        choices=["arctic", "hn", "both", "demo", "auto"],
-        default=os.environ.get("PAINPOINT_SOURCE", "both"),
-        help="arctic | hn | both | demo | auto (both, fallback demo)",
+        choices=["arctic", "hn", "appstore", "playstore", "both", "all", "demo", "auto"],
+        default=os.environ.get("PAINPOINT_SOURCE", "all"),
+        help="arctic | hn | appstore | playstore | both(reddit+hn) | all | demo | auto",
+    )
+    p.add_argument(
+        "--apps",
+        default="",
+        help="Comma-separated App Store names or numeric ids (default preset set)",
     )
     p.add_argument("--no-comments", action="store_true")
     p.add_argument(
@@ -62,6 +67,25 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _resolve_apps(apps_arg: str) -> list[tuple[str, int]]:
+    if not apps_arg.strip():
+        return list(appstore.DEFAULT_APPS)
+    out: list[tuple[str, int]] = []
+    for part in apps_arg.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if part.isdigit():
+            out.append((f"App {part}", int(part)))
+            continue
+        hits = appstore.search_app(part, limit=1)
+        if hits:
+            out.append((hits[0]["name"], int(hits[0]["id"])))
+        else:
+            console.print(f"[yellow]No App Store hit for {part}[/]")
+    return out or list(appstore.DEFAULT_APPS)
+
+
 def collect_items(args: argparse.Namespace) -> tuple[list, str]:
     subs = [s.strip() for s in args.subs.split(",") if s.strip()]
     source = args.source
@@ -71,8 +95,10 @@ def collect_items(args: argparse.Namespace) -> tuple[list, str]:
     items: list = []
     notes: list[str] = []
 
-    want_arctic = source in ("arctic", "both", "auto")
-    want_hn = source in ("hn", "both", "auto")
+    want_arctic = source in ("arctic", "both", "all", "auto")
+    want_hn = source in ("hn", "both", "all", "auto")
+    want_ios = source in ("appstore", "all", "auto")
+    want_play = source in ("playstore", "all")
 
     if want_arctic:
         try:
@@ -104,7 +130,33 @@ def collect_items(args: argparse.Namespace) -> tuple[list, str]:
             console.print(f"[yellow]HN failed ({e})[/]")
             notes.append("hn=fail")
 
-    # de-dupe by id
+    if want_ios:
+        try:
+            apps = _resolve_apps(args.apps)
+            console.print(
+                f"[cyan]Fetching App Store reviews[/] apps={[a[0] for a in apps[:6]]}…"
+            )
+            ios_items = appstore.scan_appstore(apps, pages=2, max_per_app=40)
+            items.extend(ios_items)
+            notes.append(f"appstore={len(ios_items)}")
+        except Exception as e:
+            if source == "appstore":
+                raise
+            console.print(f"[yellow]App Store failed ({e})[/]")
+            notes.append("appstore=fail")
+
+    if want_play:
+        try:
+            console.print("[cyan]Fetching Play Store reviews[/]")
+            play_items = playstore.scan_playstore(count=40)
+            items.extend(play_items)
+            notes.append(f"playstore={len(play_items)}")
+        except Exception as e:
+            if source == "playstore":
+                raise
+            console.print(f"[yellow]Play Store failed ({e})[/]")
+            notes.append("playstore=fail")
+
     seen: set[str] = set()
     uniq = []
     for it in items:
@@ -113,7 +165,7 @@ def collect_items(args: argparse.Namespace) -> tuple[list, str]:
         seen.add(it.id)
         uniq.append(it)
 
-    if not uniq and source in ("auto", "both"):
+    if not uniq and source in ("auto", "both", "all"):
         console.print("[yellow]No live hits — falling back to demo[/]")
         return demo_data.demo_items(), "demo fixtures (fallback)"
 
