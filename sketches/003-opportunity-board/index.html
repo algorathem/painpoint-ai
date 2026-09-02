@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Painpoint AI — Opportunity Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f7f7f5; --panel:#ffffff; --ink:#171717; --body:#444; --muted:#8a8a85; --faint:#b5b5ae;
+  --accent:#2563eb; --accent-soft:#eef4ff; --border:#e5e5e0; --border-strong:#d4d4cd;
+  --green:#059669; --green-soft:#e6f6ef; --amber:#b45309; --amber-soft:#fdf1e3; --red:#dc2626; --red-soft:#fdecea; --purple:#7c3aed; --purple-soft:#f3eefd;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--body);line-height:1.5;-webkit-font-smoothing:antialiased}
+.mono{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+.wrap{max-width:1440px;margin:0 auto;padding:0 20px}
+/* top bar */
+.topbar{border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:0;z-index:10}
+.top-in{display:flex;align-items:center;gap:14px;padding:12px 0}
+.brand{font-weight:700;color:var(--ink);font-size:15px;letter-spacing:-0.2px}
+.brand .dot{color:var(--accent)}
+.search{flex:1;max-width:420px}
+.search input{width:100%;border:1px solid var(--border-strong);border-radius:8px;padding:8px 12px;font-size:13px;font-family:inherit;background:var(--bg)}
+.search input:focus{outline:none;border-color:var(--accent);background:#fff}
+.top-in .spacer{flex:1}
+.avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--purple));display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:600}
+/* filter toolbar */
+.filters{display:flex;align-items:center;gap:8px;padding:14px 0;flex-wrap:wrap}
+.filter-group{display:flex;gap:6px;flex-wrap:wrap}
+.fbtn{border:1px solid var(--border-strong);background:var(--panel);border-radius:8px;padding:6px 12px;font-size:12.5px;font-family:inherit;color:var(--body);cursor:pointer;font-weight:500}
+.fbtn:hover{border-color:var(--accent)}
+.fbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.fbtn .cnt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);margin-left:4px}
+.fbtn.on .cnt{color:rgba(255,255,255,.7)}
+.filters .sep{width:1px;height:20px;background:var(--border-strong);margin:0 6px}
+/* stat row */
+.statrow{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:8px 0 20px}
+@media(max-width:900px){.statrow{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden}
+.stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.stat .v{font-size:26px;font-weight:700;color:var(--ink);margin-top:3px;letter-spacing:-0.5px}
+.stat .v small{font-size:12px;font-weight:500;color:var(--muted)}
+.stat .trend{position:absolute;top:14px;right:14px;font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace}
+.trend.up{color:var(--green)} .trend.down{color:var(--red)}
+/* kanban columns */
+.board{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:32px}
+@media(max-width:1000px){.board{grid-template-columns:1fr}}
+.col{background:var(--bg);border-radius:14px}
+.col.h{display:flex;align-items:center;gap:8px;padding:10px 4px;font-size:13px;font-weight:600;color:var(--ink)}
+.col.h .sw{width:10px;height:10px;border-radius:3px}
+.col.h .cnt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);margin-left:auto}
+.col.h .cnt{background:#fff;border:1px solid var(--border);border-radius:999px;padding:1px 8px}
+.ocard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 2px rgba(0,0,0,0.03);transition:box-shadow .15s}
+.ocard:hover{box-shadow:0 4px 14px rgba(0,0,0,0.07)}
+.ocard .t{font-weight:600;color:var(--ink);font-size:14px;letter-spacing:-0.1px}
+.ocard .t a{color:inherit;text-decoration:none}
+.ocard .t a:hover{color:var(--accent)}
+.ocard .sub{font-size:11.5px;color:var(--muted);margin:2px 0 8px}
+.ocard .tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+.otag{font-size:10.5px;font-weight:500;border-radius:5px;padding:1.5px 7px}
+.otag.green{background:var(--green-soft);color:var(--green)}
+.otag.amber{background:var(--amber-soft);color:var(--amber)}
+.otag.red{background:var(--red-soft);color:var(--red)}
+.otag.purple{background:var(--purple-soft);color:var(--purple)}
+.otag.gray{background:var(--bg);color:var(--muted);border:1px solid var(--border)}
+.ocard .metrics{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;padding-top:10px;border-top:1px solid var(--border);font-size:11.5px}
+.ocard .m .k{color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+.ocard .m .v{color:var(--body);font-weight:500;font-family:'JetBrains Mono',monospace;font-size:12px}
+/* idea detail (selected) */
+.detail{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:32px}
+.detail .d-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.detail h2{font-size:20px;color:var(--ink);letter-spacing:-0.3px}
+.detail .score{font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--green)}
+.detail .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin:16px 0}
+@media(max-width:800px){.detail .grid{grid-template-columns:1fr}}
+.detail .box{background:var(--bg);border-radius:10px;padding:12px 14px}
+.detail .box .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:3px}
+.detail .box .v{font-size:13px;color:var(--body)}
+.detail .prob{font-size:14px;line-height:1.6;color:var(--body)}
+.detail .quote{background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:12px 16px;margin:14px 0;font-size:13.5px;color:var(--ink);font-style:italic}
+.detail .quote .src{font-style:normal;font-size:11px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="wrap top-in">
+  <div class="brand">Painpoint<span class="dot">.</span>AI <span style="color:var(--muted);font-weight:400;font-size:12px">opportunity board</span></div>
+  <div class="search"><input type="text" placeholder="Search pains, ideas, subreddits…" /></div>
+  <div class="spacer"></div>
+  <div class="avatar">KC</div>
+</div></div>
+
+<div class="wrap">
+  <!-- filters -->
+  <div class="filters">
+    <span style="font-size:12px;color:var(--muted);font-weight:600">Filter:</span>
+    <button class="fbtn on">All <span class="cnt">186</span></button>
+    <div class="sep"></div>
+    <span style="font-size:12px;color:var(--muted)">WTP:</span>
+    <button class="fbtn">High <span class="cnt">31</span></button>
+    <button class="fbtn">Medium <span class="cnt">16</span></button>
+    <button class="fbtn">Low <span class="cnt">17</span></button>
+    <div class="sep"></div>
+    <span style="font-size:12px;color:var(--muted)">Sentiment:</span>
+    <button class="fbtn">Frustrated <span class="cnt">44</span></button>
+    <button class="fbtn">Annoyed <span class="cnt">26</span></button>
+    <button class="fbtn">Hopeful <span class="cnt">18</span></button>
+    <button class="fbtn">Neutral <span class="cnt">12</span></button>
+    <div class="sep"></div>
+    <span style="font-size:12px;color:var(--muted)">Subreddit:</span>
+    <button class="fbtn">SaaS</button>
+    <button class="fbtn">startups</button>
+    <button class="fbtn">Entrepreneur</button>
+    <button class="fbtn">smallbusiness</button>
+  </div>
+
+  <!-- stat row -->
+  <div class="statrow">
+    <div class="stat"><div class="k">Signals scanned</div><div class="v">2,418</div><span class="trend up">▲</span></div>
+    <div class="stat"><div class="k">Pain points</div><div class="v">186</div><span class="trend up">▲ 22%</span></div>
+    <div class="stat"><div class="k">Confirmed</div><div class="v">64 <small>/ 34%</small></div><span class="trend up">▲</span></div>
+    <div class="stat"><div class="k">Willing to pay</div><div class="v">31 <small>/ 48%</small></div><span class="trend up">▲</span></div>
+    <div class="stat"><div class="k">Est. SAM (top 5)</div><div class="v">$1.4B</div><span class="trend down">▼</span></div>
+  </div>
+
+  <!-- board -->
+  <div class="board">
+    <!-- column: high WTP -->
+    <div class="col">
+      <div class="h"><span class="sw" style="background:var(--green)"></span>High willingness to pay <span class="cnt">31</span></div>
+      <div class="ocard">
+        <div class="t"><a href="#">GL-safe Stripe→NetSuite recon</a></div>
+        <div class="sub">r/SaaS · finance · 14 evidence posts</div>
+        <div class="tags"><span class="otag green">WTP high</span><span class="otag red">frustrated</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">88</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">$38M</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">5/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">6 subs</div></div>
+        </div>
+      </div>
+      <div class="ocard">
+        <div class="t"><a href="#">Multi-cloud FinOps anomaly explainer</a></div>
+        <div class="sub">r/devops · cost intelligence · 11 evidence</div>
+        <div class="tags"><span class="otag green">WTP high</span><span class="otag amber">urgent</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">86</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">$29M</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">4/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">5 subs</div></div>
+        </div>
+      </div>
+      <div class="ocard">
+        <div class="t"><a href="#">Hallucination-resistant support copilot</a></div>
+        <div class="sub">r/startups · support · 9 evidence</div>
+        <div class="tags"><span class="otag green">WTP high</span><span class="otag purple">hopeful</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">71</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">$22M</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">4/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">3 subs</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- column: medium WTP -->
+    <div class="col">
+      <div class="h"><span class="sw" style="background:var(--amber)"></span>On the fence <span class="cnt">16</span></div>
+      <div class="ocard">
+        <div class="t"><a href="#">Competitor SaaS pricing radar</a></div>
+        <div class="sub">r/Entrepreneur · GTM · 8 evidence</div>
+        <div class="tags"><span class="otag amber">WTP med</span><span class="otag amber">annoyed</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">74</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">$18M</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">3/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">4 subs</div></div>
+        </div>
+      </div>
+      <div class="ocard">
+        <div class="t"><a href="#">Multi-location POS inventory lite</a></div>
+        <div class="sub">r/smallbusiness · retail · 7 evidence</div>
+        <div class="tags"><span class="otag amber">WTP med</span><span class="otag red">stuck</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">68</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">$14M</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">3/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">3 subs</div></div>
+        </div>
+      </div>
+      <div class="ocard">
+        <div class="t"><a href="#">Gong→Salesforce note writer</a></div>
+        <div class="sub">r/sales · CRM · 6 evidence</div>
+        <div class="tags"><span class="otag amber">WTP med</span><span class="otag amber">annoyed</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">63</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">$11M</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">3/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">2 subs</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- column: frustration -->
+    <div class="col">
+      <div class="h"><span class="sw" style="background:var(--faint)"></span>Frustration only (no WTP) <span class="cnt">17</span></div>
+      <div class="ocard" style="opacity:.7">
+        <div class="t"><a href="#">Reddit search is terrible</a></div>
+        <div class="sub">r/Entrepreneur · 5 evidence</div>
+        <div class="tags"><span class="otag gray">WTP low</span><span class="otag red">venting</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">34</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">n/a</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">2/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">1 sub</div></div>
+        </div>
+      </div>
+      <div class="ocard" style="opacity:.7">
+        <div class="t"><a href="#">Landing page builder bloat</a></div>
+        <div class="sub">r/startups · 4 evidence</div>
+        <div class="tags"><span class="otag gray">WTP low</span><span class="otag red">venting</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">29</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">n/a</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">2/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">1 sub</div></div>
+        </div>
+      </div>
+      <div class="ocard" style="opacity:.7">
+        <div class="t"><a href="#">"AI tools are overhyped"</a></div>
+        <div class="sub">r/smallbusiness · 3 evidence</div>
+        <div class="tags"><span class="otag gray">WTP low</span><span class="otag gray">neutral</span></div>
+        <div class="metrics">
+          <div class="m"><div class="k">Score</div><div class="v">21</div></div>
+          <div class="m"><div class="k">Est. SAM</div><div class="v">n/a</div></div>
+          <div class="m"><div class="k">Severity</div><div class="v">1/5</div></div>
+          <div class="m"><div class="k">Reach</div><div class="v">1 sub</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- selected idea detail -->
+  <div class="detail">
+    <div class="d-top"><h2>GL-safe Stripe→NetSuite reconciliation</h2><span class="score">88 / 100</span></div>
+    <div class="grid">
+      <div class="box"><div class="k">Buyer</div><div class="v">Controllers & finance ops at mid-market SaaS</div></div>
+      <div class="box"><div class="k">Willingness to pay</div><div class="v">High — adjacent tools already budgeted</div></div>
+      <div class="box"><div class="k">Est. niche SAM</div><div class="v">$38M (14 posts, 6 subs)</div></div>
+      <div class="box"><div class="k">Sentiment</div><div class="v">Frustrated + buying intent</div></div>
+      <div class="box"><div class="k">Severity</div><div class="v">5/5 — blocks monthly close</div></div>
+      <div class="box"><div class="k">Categories</div><div class="v">finance · workflow · integration</div></div>
+    </div>
+    <div class="prob">Monthly close burns ~12 hours copying CSVs from Stripe into NetSuite. Refund and dispute mappings drift, the general ledger breaks, and the close slips. The buyer already pays for both systems — the gap between them is the product, and it's a gap finance teams describe as a recurring, revenue-blocking chore.</div>
+    <div class="quote">"We spend 12 hours every close copying CSVs… I'd pay for something reliable that doesn't break our GL."<div class="src">r/SaaS · 14 mentions · 6 subreddits</div></div>
+  </div>
+</div>
+</body>
+</html>

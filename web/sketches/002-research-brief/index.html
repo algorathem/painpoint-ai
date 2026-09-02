@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Painpoint AI — Research Brief</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fbfbfa; --panel:#ffffff; --ink:#1a1a18; --body:#3d3d38;
+  --muted:#8a8a82; --faint:#b8b8b0; --accent:#0d6b47; --accent-soft:#e7f3ec;
+  --amber:#b9770f; --amber-soft:#faf0dd; --red:#c0392b; --blue:#1d5f9e;
+  --border:#e8e6df; --border-strong:#d8d5cc;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+.serif{font-family:'Source Serif 4',Georgia,'Times New Roman',serif}
+.wrap{max-width:900px;margin:0 auto;padding:0 24px}
+header{border-bottom:1px solid var(--border);padding:28px 0 20px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+h1.title{font-family:'Source Serif 4',Georgia,serif;font-size:34px;font-weight:600;color:var(--ink);letter-spacing:-0.5px;line-height:1.15}
+.meta{display:flex;gap:16px;margin-top:12px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.meta b{color:var(--ink);font-weight:600}
+main{padding:24px 0 80px}
+.lede{font-family:'Source Serif 4',Georgia,serif;font-size:18px;color:var(--ink);line-height:1.55;margin-bottom:32px}
+.lede strong{color:var(--accent);font-weight:600}
+/* summary chips */
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:32px}
+@media(max-width:640px){.summary{grid-template-columns:repeat(2,1fr)}}
+.chip{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.chip .n{font-size:26px;font-weight:600;color:var(--ink);letter-spacing:-0.5px}
+.chip .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+section{margin-bottom:36px}
+h2.sec{font-family:'Source Serif 4',Georgia,serif;font-size:22px;font-weight:600;color:var(--ink);margin-bottom:4px;letter-spacing:-0.3px}
+.sec-sub{font-size:13px;color:var(--muted);margin-bottom:18px}
+/* idea brief card */
+.brief{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
+.brief .top{display:flex;align-items:flex-start;gap:14px}
+.brief .num{font-family:'Source Serif 4',Georgia,serif;font-size:15px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.brief h3{font-family:'Source Serif 4',Georgia,serif;font-size:19px;font-weight:600;color:var(--ink);letter-spacing:-0.2px;line-height:1.3}
+.brief .score{font-size:12px;font-weight:600;color:var(--accent);margin-left:auto;white-space:nowrap;padding-top:3px}
+.brief .fields{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin:14px 0 10px;font-size:13px}
+@media(max-width:640px){.brief .fields{grid-template-columns:1fr}}
+.brief .fields .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.brief .fields .v{color:var(--body)}
+.brief p.problem{font-size:14px;color:var(--body);margin-bottom:12px}
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.badge{font-size:11px;font-weight:500;border-radius:6px;padding:2px 8px;border:1px solid var(--border-strong)}
+.badge.wtp-high{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.badge.wtp-mid{background:var(--amber-soft);color:var(--amber);border-color:transparent}
+.badge.wtp-low{color:var(--muted)}
+.badge.sent{background:var(--amber-soft);color:var(--amber);border-color:transparent}
+.quote{border-left:3px solid var(--accent-soft);padding:8px 0 8px 16px;margin:12px 0;font-style:italic;color:var(--body);font-size:13.5px}
+.quote .src{font-style:normal;font-size:11px;color:var(--muted);margin-top:4px}
+.quote .src a{color:var(--accent);text-decoration:none}
+/* ranking */
+.rank-row{display:flex;align-items:center;gap:14px;padding:12px 16px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:var(--panel)}
+.rank-row .pos{font-family:'Source Serif 4',Georgia,serif;font-weight:600;color:var(--accent);width:22px}
+.rank-row .txt{flex:1;font-size:14px;color:var(--ink)}
+.rank-row .freq{font-size:12px;color:var(--muted);white-space:nowrap}
+.rank-row .sevp{width:110px;flex-shrink:0}
+.rank-row .sevp .lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.sevbar{height:5px;border-radius:3px;background:var(--border)}
+.sevbar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+/* sentiment donut row */
+.sent{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:20px 24px;border:1px solid var(--border);border-radius:14px;background:var(--panel)}
+.ring{width:140px;height:140px;position:relative;flex-shrink:0}
+.ring svg{transform:rotate(-90deg)}
+.ring .cen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring .cen .n{font-size:26px;font-weight:600;color:var(--ink)}
+.ring .cen .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.sent .legend{flex:1;min-width:220px}
+.sent .lg-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px}
+.sent .sw{width:11px;height:11px;border-radius:3px;flex-shrink:0}
+.sent .lg-row .cnt{margin-left:auto;font-weight:600;color:var(--ink)}
+.sent .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
+/* market value */
+.mv-grid{display:flex;flex-direction:column;gap:14px}
+.mv-row .mv-top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}
+.mv-row .mv-top b{color:var(--ink);font-weight:600}
+.mv-row .mv-top .val{font-weight:600;color:var(--accent)}
+.mvbar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}
+.mvbar i{display:block;height:100%;border-radius:4px}
+.footnote{font-size:12px;color:var(--muted);font-style:italic;margin-top:14px}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="eyebrow">Painpoint AI · Research Brief</div>
+  <h1 class="title">Where founders are quietly asking for a tool — and would pay for it</h1>
+  <div class="meta">
+    <span><b>2,418</b> signals scanned</span>
+    <span><b>186</b> pains detected</span>
+    <span><b>64</b> LLM-confirmed</span>
+    <span><b>12</b> idea clusters</span>
+    <span>window: <b>30 days</b></span>
+    <span>subs: <b>SaaS, startups, Entrepreneur, smallbusiness</b></span>
+  </div>
+</div></header>
+
+<main class="wrap">
+  <p class="lede">Across four high-intent communities, <strong>48% of confirmed complaints carried explicit purchase intent</strong> — "I'd pay for this", "shut up and take my money". The strongest signal is not frustration but <strong>repeated, unsolved, revenue-blocking work</strong>: monthly close reconciliation and cloud spend forensics. Both show high willingness-to-pay and a clear buyer already spending on adjacent tools.</p>
+
+  <div class="summary">
+    <div class="chip"><div class="n">64</div><div class="l">Confirmed pains</div></div>
+    <div class="chip"><div class="n">31</div><div class="l">Willing to pay</div></div>
+    <div class="chip"><div class="n">12</div><div class="l">Idea clusters</div></div>
+    <div class="chip"><div class="n">$1.4B</div><div class="l">Top-5 SAM</div></div>
+  </div>
+
+  <section>
+    <h2 class="sec">Top startup angles</h2>
+    <div class="sec-sub">Ranked by severity × willingness-to-pay × reach. Not by complaint volume alone.</div>
+
+    <div class="brief">
+      <div class="top"><div class="num">1</div><h3>GL-safe Stripe→NetSuite reconciliation</h3><span class="score">88 / 100</span></div>
+      <div class="fields">
+        <div><div class="k">Buyer</div><div class="v">Controllers & finance ops at mid-market SaaS</div></div>
+        <div><div class="k">Category</div><div class="v">Finance · workflow automation</div></div>
+        <div><div class="k">Willingness to pay</div><div class="v">High</div></div>
+        <div><div class="k">Est. niche SAM</div><div class="v">$38M</div></div>
+      </div>
+      <p class="problem">Every monthly close burns ~12 hours hand-copying CSVs from Stripe into NetSuite. Refunds and disputes don't map cleanly, so the general ledger drifts and the close slips. The buyer already pays for both systems — the gap between them is the product.</p>
+      <div class="quote">"We spend 12 hours every close copying CSVs… I'd pay for something reliable that doesn't break our GL."<div class="src">r/SaaS · 14 mentions · <a href="#">open thread →</a></div></div>
+      <div class="badges"><span class="badge wtp-high">WTP high</span><span class="badge sent">frustrated + buying intent</span><span class="badge">14 evidence posts</span></div>
+    </div>
+
+    <div class="brief">
+      <div class="top"><div class="num">2</div><h3>Multi-cloud FinOps anomaly explainer</h3><span class="score">86 / 100</span></div>
+      <div class="fields">
+        <div><div class="k">Buyer</div><div class="v">FinOps / platform teams, eng managers</div></div>
+        <div><div class="k">Category</div><div class="v">DevOps · cost intelligence</div></div>
+        <div><div class="k">Willingness to pay</div><div class="v">High</div></div>
+        <div><div class="k">Est. niche SAM</div><div class="v">$29M</div></div>
+      </div>
+      <p class="problem">Budget-exceeded alerts say "you overspent" but never "why". Kubernetes workload patterns drive spikes that threshold alerts can't explain, so engineers can't act before the bill compounds.</p>
+      <div class="quote">"AWS Budgets is useless for our K8s spike patterns… I need something that explains *why* spend jumped."<div class="src">r/devops · 11 mentions · <a href="#">open thread →</a></div></div>
+      <div class="badges"><span class="badge wtp-high">WTP high</span><span class="badge sent">urgent</span><span class="badge">11 evidence posts</span></div>
+    </div>
+
+    <div class="brief">
+      <div class="top"><div class="num">3</div><h3>Competitor pricing change radar</h3><span class="score">74 / 100</span></div>
+      <div class="fields">
+        <div><div class="k">Buyer</div><div class="v">Founders, PMs, sales leaders</div></div>
+        <div><div class="k">Category</div><div class="v">GTM · market intel</div></div>
+        <div><div class="k">Willingness to pay</div><div class="v">Medium</div></div>
+        <div><div class="k">Est. niche SAM</div><div class="v">$18M</div></div>
+      </div>
+      <p class="problem">Teams check 6–8 competitor pricing pages by hand every week, log diffs in spreadsheets, and still miss the drops and plan renames that change win rates.</p>
+      <div class="quote">"Checking 8 competitor sites weekly is a nightmare. Is there a tool that alerts on price drops for B2B SaaS?"<div class="src">r/Entrepreneur · 8 mentions · <a href="#">open thread →</a></div></div>
+      <div class="badges"><span class="badge wtp-mid">WTP medium</span><span class="badge sent">annoyed</span><span class="badge">8 evidence posts</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">Pain ranking</h2>
+    <div class="sec-sub">Severity × frequency across all matched signals, deduplicated.</div>
+    <div class="rank-row"><span class="pos">1</span><span class="txt">Manual Stripe→NetSuite reconciliation breaks the GL at close</span><span class="freq">14×</span><span class="sevp"><div class="lbl">severity</div><div class="sevbar"><i style="width:92%"></i></div></span></div>
+    <div class="rank-row"><span class="pos">2</span><span class="txt">Cloud cost spikes reported without root-cause context</span><span class="freq">11×</span><span class="sevp"><div class="lbl">severity</div><div class="sevbar"><i style="width:85%"></i></div></span></div>
+    <div class="rank-row"><span class="pos">3</span><span class="txt">Tier-1 support replies hallucinate product facts</span><span class="freq">9×</span><span class="sevp"><div class="lbl">severity</div><div class="sevbar"><i style="width:76%"></i></div></span></div>
+    <div class="rank-row"><span class="pos">4</span><span class="txt">Competitor pricing changes caught too late</span><span class="freq">8×</span><span class="sevp"><div class="lbl">severity</div><div class="sevbar"><i style="width:70%"></i></div></span></div>
+    <div class="rank-row"><span class="pos">5</span><span class="txt">POS inventory drift across locations</span><span class="freq">7×</span><span class="sevp"><div class="lbl">severity</div><div class="sevbar"><i style="width:64%"></i></div></span></div>
+  </section>
+
+  <section>
+    <h2 class="sec">Sentiment & intent</h2>
+    <div class="sec-sub">Tone per signal — separates buyable problems from venting.</div>
+    <div class="sent">
+      <div class="ring">
+        <svg width="140" height="140" viewBox="0 0 140 140">
+          <circle cx="70" cy="70" r="58" fill="none" stroke="var(--border)" stroke-width="16"/>
+          <circle cx="70" cy="70" r="58" fill="none" stroke="var(--red)" stroke-width="16" stroke-dasharray="176 400" stroke-linecap="round"/>
+          <circle cx="70" cy="70" r="58" fill="none" stroke="var(--amber)" stroke-width="16" stroke-dasharray="104 400" stroke-dashoffset="-176" stroke-linecap="round"/>
+          <circle cx="70" cy="70" r="58" fill="none" stroke="var(--accent)" stroke-width="16" stroke-dasharray="72 400" stroke-dashoffset="-280" stroke-linecap="round"/>
+          <circle cx="70" cy="70" r="58" fill="none" stroke="var(--faint)" stroke-width="16" stroke-dasharray="48 400" stroke-dashoffset="-352" stroke-linecap="round"/>
+        </svg>
+        <div class="cen"><div class="n">64</div><div class="l">signals</div></div>
+      </div>
+      <div class="legend">
+        <div class="lg-row"><span class="sw" style="background:var(--red)"></span>Frustrated<div class="cnt">44%</div></div>
+        <div class="lg-row"><span class="sw" style="background:var(--amber)"></span>Annoyed<div class="cnt">26%</div></div>
+        <div class="lg-row"><span class="sw" style="background:var(--accent)"></span>Hopeful (asks for tool)<div class="cnt">18%</div></div>
+        <div class="lg-row"><span class="sw" style="background:var(--faint)"></span>Neutral<div class="cnt">12%</div></div>
+        <div class="note">The <strong>WTP split</strong>: 31 pains show explicit purchase intent ("I'd pay for", "take my money"), 16 are on the fence, 17 are pure frustration with no buying signal. Idea scoring down-weights the frustration-only bucket.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">Expected market value</h2>
+    <div class="sec-sub">Niche SAM = matched buyers × realistic ARPU, discounted by WTP ratio.</div>
+    <div class="mv-grid">
+      <div class="mv-row"><div class="mv-top"><b>Stripe→NetSuite recon</b><span class="val">$38M</span></div><div class="mvbar"><i style="width:88%;background:var(--accent)"></i></div></div>
+      <div class="mv-row"><div class="mv-top"><b>FinOps anomaly explainer</b><span class="val">$29M</span></div><div class="mvbar"><i style="width:86%;background:var(--accent)"></i></div></div>
+      <div class="mv-row"><div class="mv-top"><b>Support copilot</b><span class="val">$22M</span></div><div class="mvbar"><i style="width:71%;background:var(--blue)"></i></div></div>
+      <div class="mv-row"><div class="mv-top"><b>Pricing radar</b><span class="val">$18M</span></div><div class="mvbar"><i style="width:74%;background:var(--blue)"></i></div></div>
+      <div class="mv-row"><div class="mv-top"><b>POS inventory lite</b><span class="val">$14M</span></div><div class="mvbar"><i style="width:68%;background:var(--blue)"></i></div></div>
+    </div>
+    <p class="footnote">Directional only — based on public Reddit mention frequency and stated intent, not a market survey.</p>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Painpoint AI — Analyst Cockpit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#08090a; --panel:#0f1011; --surface:#191a1b; --surface2:#28282c;
+  --text:#f7f8f8; --body:#d0d6e0; --muted:#8a8f98; --faint:#62666d;
+  --accent:#7170ff; --accent-bg:#5e6ad2; --accent-hover:#828fff;
+  --green:#27a644; --emerald:#10b981; --amber:#e0a030; --red:#e5484d;
+  --border:rgba(255,255,255,0.08); --border-subtle:rgba(255,255,255,0.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--body);line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"cv01","ss03"}
+.mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.wrap{max-width:1400px;margin:0 auto;padding:0 20px}
+header{border-bottom:1px solid var(--border-subtle);position:sticky;top:0;background:rgba(8,9,10,.85);backdrop-filter:blur(12px);z-index:10}
+.hbar{display:flex;align-items:center;gap:14px;padding:12px 0}
+.logo{width:26px;height:26px;border-radius:7px;background:var(--accent-bg);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:13px}
+.hbar .name{font-weight:600;color:var(--text);font-size:14px;letter-spacing:-0.2px}
+.hbar .crumb{color:var(--faint);font-size:13px}
+.hbar .spacer{flex:1}
+.pill{font-size:11px;font-weight:500;color:var(--body);border:1px solid var(--border);border-radius:999px;padding:2px 10px}
+.pill.live{color:var(--emerald);border-color:rgba(16,185,129,.35)}
+.pill.warn{color:var(--amber);border-color:rgba(224,160,48,.35)}
+main{padding:20px 0 60px}
+/* stat strip */
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}
+@media(max-width:1000px){.stats{grid-template-columns:repeat(3,1fr)}}
+.stat{background:var(--panel);border:1px solid var(--border-subtle);border-radius:10px;padding:12px 14px}
+.stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+.stat .v{font-size:24px;font-weight:600;color:var(--text);margin-top:2px;letter-spacing:-0.5px}
+.stat .v .unit{font-size:12px;color:var(--muted);font-weight:400}
+.stat .d{font-size:11px;color:var(--faint);margin-top:3px}
+.stat .d.up{color:var(--emerald)} .stat .d.down{color:var(--red)}
+/* layout */
+.grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px}
+@media(max-width:1100px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden}
+.card.h{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border-subtle)}
+.card.h h3{font-size:13px;font-weight:600;color:var(--text);letter-spacing:-0.2px}
+.card.h .sub{font-size:11px;color:var(--faint)}
+.card.h .spacer{flex:1}
+.card.b{padding:16px}
+.card.b.flat{padding:0}
+h2.sec{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:0 0 10px}
+/* ideas table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;color:var(--faint);font-weight:500;text-transform:uppercase;letter-spacing:.05em;padding:8px 12px;border-bottom:1px solid var(--border-subtle)}
+td{padding:12px;border-bottom:1px solid var(--border-subtle);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr.hov:hover td{background:rgba(255,255,255,0.015)}
+.t-name{font-weight:600;color:var(--text)}
+.t-why{color:var(--muted);font-size:12px;margin-top:2px}
+.score{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:15px}
+.score.hi{color:var(--emerald)} .score.mid{color:var(--amber)} .score.lo{color:var(--muted)}
+.tag{display:inline-block;font-size:10.5px;font-weight:500;border-radius:5px;padding:1px 7px;margin:0 3px 3px 0;border:1px solid var(--border)}
+.tag.cat{color:var(--body)} 
+.tag.wtp-high{color:var(--emerald);border-color:rgba(16,185,129,.4);background:rgba(16,185,129,.07)}
+.tag.wtp-mid{color:var(--amber);border-color:rgba(224,160,48,.4);background:rgba(224,160,48,.07)}
+.tag.wtp-low{color:var(--muted);border-color:var(--border)}
+.tag.sent-pos{color:var(--emerald)} .tag.sent-neg{color:var(--red)} .tag.sent-neu{color:var(--faint)}
+/* gauge bars */
+.bar{height:6px;border-radius:3px;background:var(--surface2);overflow:hidden;margin-top:5px}
+.bar>i{display:block;height:100%;border-radius:3px}
+.mv{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--muted);white-space:nowrap}
+/* pain rank list */
+.pain{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border-subtle);align-items:flex-start}
+.pain:last-child{border-bottom:none}
+.rank{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--faint);width:22px;text-align:right;padding-top:1px}
+.pain .body{flex:1}
+.pain .txt{font-size:13px;color:var(--text)}
+.pain .meta{font-size:11px;color:var(--faint);margin-top:3px}
+.pain .meta a{color:var(--accent);text-decoration:none}
+.pain .bar{max-width:160px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--faint);margin-bottom:10px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+/* right rail */
+.rail{display:flex;flex-direction:column;gap:16px}
+.donut{display:flex;align-items:center;gap:18px}
+.ring{width:120px;height:120px;position:relative;flex-shrink:0}
+.ring svg{transform:rotate(-90deg)}
+.ring .cen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring .cen .n{font-size:26px;font-weight:600;color:var(--text);letter-spacing:-1px}
+.ring .cen .l{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+.legend2{display:flex;flex-direction:column;gap:6px;font-size:12px}
+.legend2 .row{display:flex;align-items:center;gap:8px}
+.legend2 .sw{width:10px;height:10px;border-radius:3px}
+.legend2 .cnt{margin-left:auto;font-family:'JetBrains Mono',monospace;color:var(--muted);font-size:12px}
+/* sentiment breakdown */
+.sent-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:12px}
+.sent-row .lbl{width:64px;color:var(--muted)}
+.sent-row .bar{flex:1;margin:0}
+.sent-row .pct{width:40px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--body);font-size:12px}
+.btn{background:var(--accent-bg);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:500;cursor:pointer}
+.btn:hover{background:var(--accent-hover)}
+.btn.ghost{background:transparent;border:1px solid var(--border);color:var(--body)}
+</style>
+</head>
+<body>
+<header><div class="wrap hbar">
+  <div class="logo">P</div>
+  <span class="name">Painpoint AI</span>
+  <span class="crumb">/ analyst cockpit</span>
+  <div class="spacer"></div>
+  <span class="pill live">● live scan</span>
+  <span class="pill">r/SaaS · r/startups · r/Entrepreneur · r/smallbusiness</span>
+  <span class="pill warn">30d window</span>
+</div></header>
+
+<main class="wrap">
+  <!-- stat strip -->
+  <div class="stats">
+    <div class="stat"><div class="k">Signals scanned</div><div class="v">2,418</div><div class="d">posts + comments</div></div>
+    <div class="stat"><div class="k">Pain points</div><div class="v">186</div><div class="d up">+22% vs last scan</div></div>
+    <div class="stat"><div class="k">Confirmed (LLM)</div><div class="v">64</div><div class="d">34% precision</div></div>
+    <div class="stat"><div class="k">Idea clusters</div><div class="v">12</div><div class="d">≥2 evidence each</div></div>
+    <div class="stat"><div class="k">Willing to pay</div><div class="v">31</div><div class="d">48% of confirmed</div></div>
+    <div class="stat"><div class="k">Est. TAM (top 5)</div><div class="v">$1.4B</div><div class="d">sum of niche SAM</div></div>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT: ideas table -->
+    <div>
+      <div class="card">
+        <div class="h"><h3>Startup ideas · ranked</h3><span class="sub">scored by severity × WTP × reach</span><div class="spacer"></div><button class="btn ghost">Export</button></div>
+        <div class="b flat">
+          <table>
+            <thead><tr><th>Idea</th><th>Score</th><th>Pain summary</th><th>WTP</th><th>Sentiment</th><th>Est. value</th><th>Evidence</th></tr></thead>
+            <tbody>
+              <tr class="hov">
+                <td><div class="t-name">GL-safe Stripe→NetSuite recon</div><div class="t-why">Finance ops · workflow</div></td>
+                <td><span class="score hi">88</span></td>
+                <td><div>Monthly close takes 12h of manual CSV copy; refund/dispute mappings break the GL.</div><div class="bar"><i style="width:88%;background:var(--emerald)"></i></div></td>
+                <td><span class="tag wtp-high">high</span></td>
+                <td><span class="tag sent-neg">frustrated</span></td>
+                <td><div class="mv">$38M SAM</div></td>
+                <td><div class="mv">14 posts</div><div class="mv" style="margin-top:2px">6 subs</div></td>
+              </tr>
+              <tr class="hov">
+                <td><div class="t-name">Multi-cloud FinOps anomaly explainer</div><div class="t-why">DevOps · finance</div></td>
+                <td><span class="score hi">86</span></td>
+                <td><div>Budget alerts don't explain the spike; K8s patterns cause silent overruns.</div><div class="bar"><i style="width:86%;background:var(--emerald)"></i></div></td>
+                <td><span class="tag wtp-high">high</span></td>
+                <td><span class="tag sent-neg">urgent</span></td>
+                <td><div class="mv">$29M SAM</div></td>
+                <td><div class="mv">11 posts</div><div class="mv" style="margin-top:2px">5 subs</div></td>
+              </tr>
+              <tr class="hov">
+                <td><div class="t-name">Competitor SaaS pricing radar</div><div class="t-why">Sales · GTM</div></td>
+                <td><span class="score mid">74</span></td>
+                <td><div>Weekly manual scraping of pricing pages; missed drops lose deals.</div><div class="bar"><i style="width:74%;background:var(--amber)"></i></div></td>
+                <td><span class="tag wtp-mid">medium</span></td>
+                <td><span class="tag sent-neg">annoyed</span></td>
+                <td><div class="mv">$18M SAM</div></td>
+                <td><div class="mv">8 posts</div><div class="mv" style="margin-top:2px">4 subs</div></td>
+              </tr>
+              <tr class="hov">
+                <td><div class="t-name">Hallucination-resistant support copilot</div><div class="t-why">Support · automation</div></td>
+                <td><span class="score mid">71</span></td>
+                <td><div>Tier-1 Intercom answers hallucinate or sound robotic; humans re-enter queue.</div><div class="bar"><i style="width:71%;background:var(--amber)"></i></div></td>
+                <td><span class="tag wtp-high">high</span></td>
+                <td><span class="tag sent-pos">hopeful</span></td>
+                <td><div class="mv">$22M SAM</div></td>
+                <td><div class="mv">9 posts</div><div class="mv" style="margin-top:2px">3 subs</div></td>
+              </tr>
+              <tr class="hov">
+                <td><div class="t-name">Multi-location POS inventory lite</div><div class="t-why">Retail · ops</div></td>
+                <td><span class="score mid">68</span></td>
+                <td><div>Inventory mismatches force Excel workarounds; no budget for full ERP.</div><div class="bar"><i style="width:68%;background:var(--amber)"></i></div></td>
+                <td><span class="tag wtp-mid">medium</span></td>
+                <td><span class="tag sent-neg">stuck</span></td>
+                <td><div class="mv">$14M SAM</div></td>
+                <td><div class="mv">7 posts</div><div class="mv" style="margin-top:2px">3 subs</div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- pain ranking -->
+      <div class="card" style="margin-top:16px">
+        <div class="h"><h3>Pain ranking</h3><span class="sub">severity × frequency, deduped</span><div class="spacer"></div><span class="pill">64 confirmed</span></div>
+        <div class="b">
+          <div class="legend">
+            <span><i style="background:var(--emerald)"></i>high severity</span>
+            <span><i style="background:var(--amber)"></i>medium</span>
+            <span><i style="background:var(--faint)"></i>low</span>
+          </div>
+          <div class="pain"><div class="rank">1</div><div class="body"><div class="txt">Manual Stripe→NetSuite reconciliation breaks the GL at close</div><div class="meta">r/SaaS · 14 mentions · <a href="#">view threads</a></div></div><div class="bar"><i style="width:92%;background:var(--emerald)"></i></div></div>
+          <div class="pain"><div class="rank">2</div><div class="body"><div class="txt">Cloud cost spikes reported without root-cause explanation</div><div class="meta">r/devops · 11 mentions · <a href="#">view threads</a></div></div><div class="bar"><i style="width:85%;background:var(--emerald)"></i></div></div>
+          <div class="pain"><div class="rank">3</div><div class="body"><div class="txt">Tier-1 support replies hallucinate product facts</div><div class="meta">r/startups · 9 mentions · <a href="#">view threads</a></div></div><div class="bar"><i style="width:76%;background:var(--amber)"></i></div></div>
+          <div class="pain"><div class="rank">4</div><div class="body"><div class="txt">Competitor pricing changes caught too late, weekly manual checks</div><div class="meta">r/Entrepreneur · 8 mentions · <a href="#">view threads</a></div></div><div class="bar"><i style="width:70%;background:var(--amber)"></i></div></div>
+          <div class="pain"><div class="rank">5</div><div class="body"><div class="txt">POS inventory drift across locations, Excel as the system of record</div><div class="meta">r/smallbusiness · 7 mentions · <a href="#">view threads</a></div></div><div class="bar"><i style="width:64%;background:var(--amber)"></i></div></div>
+          <div class="pain"><div class="rank">6</div><div class="body"><div class="txt">Gong→Salesforce note logging violates validation rules</div><div class="meta">r/sales · 6 mentions · <a href="#">view threads</a></div></div><div class="bar"><i style="width:55%;background:var(--faint)"></i></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT rail -->
+    <div class="rail">
+      <div class="card">
+        <div class="h"><h3>WTP vs frustration</h3><span class="sub">what's buyable vs just venting</span></div>
+        <div class="b">
+          <div class="donut">
+            <div class="ring">
+              <svg width="120" height="120" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surface2)" stroke-width="14"/>
+                <circle cx="60" cy="60" r="50" fill="none" stroke="var(--emerald)" stroke-width="14" stroke-dasharray="151 314" stroke-linecap="round"/>
+                <circle cx="60" cy="60" r="50" fill="none" stroke="var(--amber)" stroke-width="14" stroke-dasharray="79 314" stroke-dashoffset="-151" stroke-linecap="round"/>
+                <circle cx="60" cy="60" r="50" fill="none" stroke="var(--faint)" stroke-width="14" stroke-dasharray="85 314" stroke-dashoffset="-230" stroke-linecap="round"/>
+              </svg>
+              <div class="cen"><div class="n">64</div><div class="l">pains</div></div>
+            </div>
+            <div class="legend2">
+              <div class="row"><span class="sw" style="background:var(--emerald)"></span>Willing to pay<div class="cnt">31</div></div>
+              <div class="row"><span class="sw" style="background:var(--amber)"></span>On the fence<div class="cnt">16</div></div>
+              <div class="row"><span class="sw" style="background:var(--faint)"></span>Pure frustration<div class="cnt">17</div></div>
+            </div>
+          </div>
+          <p style="font-size:11px;color:var(--faint);margin-top:12px">48% of confirmed pains show explicit purchase intent ("I'd pay for", "shut up and take my money"). Frustration-only posts are filtered from idea scoring.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="h"><h3>Sentiment analysis</h3><span class="sub">tone of matched signals</span></div>
+        <div class="b">
+          <div class="sent-row"><span class="lbl">Frustrated</span><div class="bar"><i style="width:44%;background:var(--red)"></i></div><span class="pct">44%</span></div>
+          <div class="sent-row"><span class="lbl">Annoyed</span><div class="bar"><i style="width:26%;background:var(--amber)"></i></div><span class="pct">26%</span></div>
+          <div class="sent-row"><span class="lbl">Hopeful</span><div class="bar"><i style="width:18%;background:var(--emerald)"></i></div><span class="pct">18%</span></div>
+          <div class="sent-row"><span class="lbl">Neutral</span><div class="bar"><i style="width:12%;background:var(--faint)"></i></div><span class="pct">12%</span></div>
+          <p style="font-size:11px;color:var(--faint);margin-top:10px">Sentiment is per-signal, not per-post. "Hopeful" = complaint + request for a solution.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="h"><h3>Market value estimate</h3><span class="sub">SAM = buyers × price point</span></div>
+        <div class="b">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Top opportunities by estimated serviceable market (niche, not full TAM).</div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div><div style="display:flex;justify-content:space-between;font-size:12px"><span class="t-name">Stripe→NetSuite</span><span class="mv">$38M</span></div><div class="bar"><i style="width:88%;background:var(--emerald)"></i></div></div>
+            <div><div style="display:flex;justify-content:space-between;font-size:12px"><span class="t-name">FinOps anomaly</span><span class="mv">$29M</span></div><div class="bar"><i style="width:86%;background:var(--emerald)"></i></div></div>
+            <div><div style="display:flex;justify-content:space-between;font-size:12px"><span class="t-name">Support copilot</span><span class="mv">$22M</span></div><div class="bar"><i style="width:71%;background:var(--amber)"></i></div></div>
+            <div><div style="display:flex;justify-content:space-between;font-size:12px"><span class="t-name">Pricing radar</span><span class="mv">$18M</span></div><div class="bar"><i style="width:74%;background:var(--amber)"></i></div></div>
+            <div><div style="display:flex;justify-content:space-between;font-size:12px"><span class="t-name">POS inventory</span><span class="mv">$14M</span></div><div class="bar"><i style="width:68%;background:var(--amber)"></i></div></div>
+          </div>
+          <p style="font-size:11px;color:var(--faint);margin-top:12px">Method: matched buyers × realistic ARPU, discounted for WTP ratio. Flag as directional, not financial advice.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="h"><h3>Source breakdown</h3></div>
+        <div class="b">
+          <div class="sent-row"><span class="lbl" style="width:80px">r/SaaS</span><div class="bar"><i style="width:38%;background:var(--accent)"></i></div><span class="pct">38%</span></div>
+          <div class="sent-row"><span class="lbl" style="width:80px">r/startups</span><div class="bar"><i style="width:27%;background:var(--accent-hover)"></i></div><span class="pct">27%</span></div>
+          <div class="sent-row"><span class="lbl" style="width:80px">r/Entrepreneur</span><div class="bar"><i style="width:21%;background:#828fff"></i></div><span class="pct">21%</span></div>
+          <div class="sent-row"><span class="lbl" style="width:80px">r/smallbiz</span><div class="bar"><i style="width:14%;background:var(--faint)"></i></div><span class="pct">14%</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+</body>
+</html>
