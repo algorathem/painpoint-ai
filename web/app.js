@@ -1,6 +1,6 @@
 /**
- * Painpoint AI — browser client
- * Data: Arctic Shift (CORS *) + optional OpenAI-compatible LLM (BYOK)
+ * Painpoint AI — Analyst Cockpit
+ * Arctic Shift + phrase filter + optional BYOK LLM + WTP/sentiment/SAM scoring
  */
 
 const ARCTIC = "https://arctic-shift.photon-reddit.com";
@@ -86,6 +86,17 @@ const SOFT = [
   "overwhelmed",
 ];
 
+const WTP_HIGH_RE =
+  /\b(i'?d pay|i would pay|shut up and take|take my money|worth \$?\d|happy to pay|will pay|paying for|budget for|roi)\b/i;
+const WTP_MID_RE =
+  /\b(looking for a (tool|app|software)|is there a (tool|app)|need a (tool|app|way)|recommend a|anyone know a)\b/i;
+const HOPE_RE =
+  /\b(looking for|is there|wish there|need a tool|need an app|any recommendations|recommend)\b/i;
+const FRUST_RE =
+  /\b(hate|frustrated|frustrating|sick of|fed up|nightmare|broken|useless|terrible|awful)\b/i;
+const ANNOY_RE =
+  /\b(annoying|annoyed|tedious|waste of time|takes forever|manual|painful)\b/i;
+
 const DEMO = [
   {
     id: "demo0",
@@ -122,18 +133,39 @@ const DEMO = [
     source: "post",
     subreddit: "startups",
     title: "Customer support is drowning us after launch",
-    body: "Same 15 questions every day in Intercom. Need automation for tier-1 but everything we tried hallucinates or sounds robotic. Anyone else struggling?",
+    body: "Same 15 questions every day in Intercom. Need automation for tier-1 but everything we tried hallucinates or sounds robotic. Anyone else struggling? I'd pay for something that doesn't sound like a bot.",
     score: 210,
     num_comments: 67,
     url: "https://www.reddit.com/r/startups/comments/demo3/",
+  },
+  {
+    id: "demo4",
+    source: "post",
+    subreddit: "devops",
+    title: "Why is there no good cost anomaly alert for multi-cloud?",
+    body: "AWS Budgets is useless for our K8s spike patterns. Looking for an app that explains *why* spend jumped, not just that it did. Happy to pay for FinOps tooling that works.",
+    score: 95,
+    num_comments: 28,
+    url: "https://www.reddit.com/r/devops/comments/demo4/",
+  },
+  {
+    id: "demo5",
+    source: "post",
+    subreddit: "sales",
+    title: "CRM hygiene is a waste of time",
+    body: "Reps hate manually logging calls. We need automation that writes notes from Gong without wrecking Salesforce validation rules.",
+    score: 73,
+    num_comments: 19,
+    url: "https://www.reddit.com/r/sales/comments/demo5/",
   },
 ];
 
 /** @type {Set<string>} */
 const selected = new Set(["SaaS", "Entrepreneur", "startups"]);
 
-/** @type {null | {candidates:any[], pains:any[], ideas:any[]}} */
+/** @type {null | object} */
 let lastResult = null;
+let lastScannedCount = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -145,18 +177,71 @@ function matchPhrases(text) {
   return soft.length >= 2 ? soft : [];
 }
 
+function inferWtp(text, llmWtp) {
+  if (llmWtp && ["high", "medium", "low"].includes(String(llmWtp).toLowerCase())) {
+    return String(llmWtp).toLowerCase();
+  }
+  const t = text || "";
+  if (WTP_HIGH_RE.test(t)) return "high";
+  if (WTP_MID_RE.test(t)) return "medium";
+  return "low";
+}
+
+function inferSentiment(text) {
+  const t = text || "";
+  if (HOPE_RE.test(t) && (FRUST_RE.test(t) || ANNOY_RE.test(t) || WTP_HIGH_RE.test(t))) {
+    return "hopeful";
+  }
+  if (FRUST_RE.test(t)) return "frustrated";
+  if (ANNOY_RE.test(t)) return "annoyed";
+  if (HOPE_RE.test(t)) return "hopeful";
+  return "neutral";
+}
+
+function estimateSam(idea, pains) {
+  // Directional niche SAM heuristic (USD millions)
+  const wtp = idea.wtp || "medium";
+  const wtpMul = wtp === "high" ? 1 : wtp === "medium" ? 0.55 : 0.15;
+  const sev = idea.severity || 3;
+  const evidence = Math.max(1, idea.evidence_count || 1);
+  const reach = Math.max(1, idea.reach_subs || 1);
+  const baseBuyers = 800 + evidence * 420 + reach * 900;
+  const arpu = 40 + sev * 18 + (wtp === "high" ? 35 : 0);
+  const sam = Math.round((baseBuyers * arpu * 12 * wtpMul) / 1e6);
+  return Math.max(1, sam);
+}
+
 function setStatus(msg, kind = "") {
   const el = $("status");
+  if (!el) return;
   el.textContent = msg;
   el.className = "status" + (kind ? ` ${kind}` : "");
+}
+
+function setPill(id, text, cls = "") {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = "pill" + (cls ? ` ${cls}` : "");
 }
 
 function normalizeSub(s) {
   return s.trim().replace(/^r\//i, "").replace(/\s+/g, "");
 }
 
+function updateHeaderPills() {
+  const subs = [...selected];
+  setPill(
+    "pill-subs",
+    subs.length ? subs.slice(0, 4).map((s) => `r/${s}`).join(" · ") + (subs.length > 4 ? " +" : "") : "no subs"
+  );
+  const days = Number($("days")?.value || 30);
+  setPill("pill-window", `${days}d`, "warn");
+}
+
 function renderPresets() {
   const row = $("preset-row");
+  if (!row) return;
   row.innerHTML = "";
   for (const name of PRESETS) {
     const b = document.createElement("button");
@@ -168,6 +253,7 @@ function renderPresets() {
       else selected.add(name);
       renderPresets();
       renderSelected();
+      updateHeaderPills();
     });
     row.appendChild(b);
   }
@@ -175,9 +261,10 @@ function renderPresets() {
 
 function renderSelected() {
   const row = $("selected-subs");
+  if (!row) return;
   row.innerHTML = "";
   if (!selected.size) {
-    row.innerHTML = `<span class="hint">No subreddits selected.</span>`;
+    row.innerHTML = `<span class="empty-inline">No subreddits selected.</span>`;
     return;
   }
   for (const name of [...selected].sort((a, b) => a.localeCompare(b))) {
@@ -190,19 +277,20 @@ function renderSelected() {
       selected.delete(name);
       renderPresets();
       renderSelected();
+      updateHeaderPills();
     });
     row.appendChild(b);
   }
 }
 
 function addSubFromInput() {
-  const raw = $("sub-input").value;
-  const name = normalizeSub(raw);
+  const name = normalizeSub($("sub-input").value);
   if (!name) return;
   selected.add(name);
   $("sub-input").value = "";
   renderPresets();
   renderSelected();
+  updateHeaderPills();
 }
 
 function loadLlmSettings() {
@@ -246,9 +334,7 @@ async function arcticGet(path, params) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(url.toString(), {
-      headers: { Accept: "application/json" },
-    });
+    const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
     if (res.ok) {
       const data = await res.json();
       return data.data || [];
@@ -272,12 +358,9 @@ function permalink(p) {
 
 function postToItem(p) {
   const title = (p.title || "").trim();
-  const body = (p.selftext || "").trim();
-  if (body === "[removed]" || body === "[deleted]") {
-    /* keep title only */
-  }
-  const cleanBody = body === "[removed]" || body === "[deleted]" ? "" : body;
-  const blob = `${title}\n${cleanBody}`;
+  let body = (p.selftext || "").trim();
+  if (body === "[removed]" || body === "[deleted]") body = "";
+  const blob = `${title}\n${body}`;
   const phrases = matchPhrases(blob);
   if (!phrases.length) return null;
   return {
@@ -285,7 +368,7 @@ function postToItem(p) {
     source: "post",
     subreddit: String(p.subreddit || ""),
     title,
-    body: cleanBody.slice(0, 4000),
+    body: body.slice(0, 4000),
     score: Number(p.score || 0),
     num_comments: Number(p.num_comments || 0),
     url: permalink(p),
@@ -324,14 +407,17 @@ async function scanArctic(subs, { days, limit, comments }) {
   const after = now - days * 86400;
   const items = [];
   const seen = new Set();
+  let scanned = 0;
   for (const sub of subs) {
     setStatus(`Fetching r/${sub} posts…`);
+    setPill("pill-status", `r/${sub}`, "live");
     const posts = await arcticGet("/api/posts/search", {
       subreddit: sub,
       limit,
       after,
       before: now,
     });
+    scanned += posts.length;
     for (const p of posts) {
       const it = postToItem(p);
       if (it && !seen.has(it.id)) {
@@ -348,6 +434,7 @@ async function scanArctic(subs, { days, limit, comments }) {
         after,
         before: now,
       });
+      scanned += cs.length;
       for (const c of cs) {
         const it = commentToItem(c);
         if (it && !seen.has(it.id)) {
@@ -358,6 +445,7 @@ async function scanArctic(subs, { days, limit, comments }) {
       await sleep(350);
     }
   }
+  lastScannedCount = scanned;
   items.sort((a, b) => b.score + b.num_comments * 2 - (a.score + a.num_comments * 2));
   return items;
 }
@@ -365,7 +453,7 @@ async function scanArctic(subs, { days, limit, comments }) {
 async function classifyItem(item, { base, key, model }) {
   const system = `You are a B2B SaaS opportunity analyst.
 Return STRICT JSON only:
-{"is_pain":boolean,"description":"one sentence","category":"workflow|automation|integration|reporting|sales|support|compliance|finance|hr|devops|marketing|other","severity":1-5,"willingness_to_pay":"low|medium|high|unknown","idea_seed":"short product angle","confidence":0-1}
+{"is_pain":boolean,"description":"one sentence","category":"workflow|automation|integration|reporting|sales|support|compliance|finance|hr|devops|marketing|other","severity":1-5,"willingness_to_pay":"low|medium|high|unknown","sentiment":"frustrated|annoyed|hopeful|neutral","idea_seed":"short product angle","confidence":0-1}
 If not a useful product pain, is_pain=false.`;
   const user = `type=${item.source}
 subreddit=r/${item.subreddit}
@@ -388,7 +476,7 @@ ${(item.body || "").slice(0, 3000)}`;
     body: JSON.stringify({
       model,
       temperature: 0.2,
-      max_tokens: 350,
+      max_tokens: 400,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -403,13 +491,15 @@ ${(item.body || "").slice(0, 3000)}`;
   const text = data.choices?.[0]?.message?.content || "{}";
   const m = text.match(/\{[\s\S]*\}/);
   const parsed = JSON.parse(m ? m[0] : "{}");
+  const blob = `${item.title}\n${item.body || ""}`;
   return {
     ...item,
     is_pain: !!parsed.is_pain,
     description: parsed.description || "",
     category: parsed.category || "other",
     severity: Number(parsed.severity || 0),
-    willingness_to_pay: parsed.willingness_to_pay || "unknown",
+    willingness_to_pay: inferWtp(blob, parsed.willingness_to_pay),
+    sentiment: parsed.sentiment || inferSentiment(blob),
     idea_seed: parsed.idea_seed || "",
     confidence: Number(parsed.confidence || 0),
   };
@@ -420,11 +510,11 @@ async function clusterIdeas(pains, { base, key, model }) {
   if (!truePains.length) return [];
   const lines = truePains.slice(0, 40).map(
     (p, i) =>
-      `- id=${p.id || "e" + i} | r/${p.subreddit} | sev=${p.severity} | cat=${p.category} | ${p.description} | seed=${p.idea_seed} | url=${p.url}`
+      `- id=${p.id || "e" + i} | r/${p.subreddit} | sev=${p.severity} | cat=${p.category} | wtp=${p.willingness_to_pay} | sent=${p.sentiment} | ${p.description} | seed=${p.idea_seed} | url=${p.url}`
   );
   const system = `Cluster Reddit pain points into startup ideas. STRICT JSON:
-{"ideas":[{"title":"...","problem":"...","who":"...","why_now":"...","evidence_ids":["id"],"categories":["..."],"score":0-100}]}
-Max 8 ideas. Only use provided evidence ids.`;
+{"ideas":[{"title":"...","problem":"...","who":"...","why_now":"...","evidence_ids":["id"],"categories":["..."],"score":0-100,"wtp":"high|medium|low","sentiment":"frustrated|annoyed|hopeful|neutral","severity":1-5}]}
+Max 8 ideas. Only use provided evidence ids. Prefer high-WTP clusters.`;
   const url = `${base.replace(/\/$/, "")}/chat/completions`;
   const res = await fetch(url, {
     method: "POST",
@@ -435,7 +525,7 @@ Max 8 ideas. Only use provided evidence ids.`;
     body: JSON.stringify({
       model,
       temperature: 0.3,
-      max_tokens: 1800,
+      max_tokens: 2000,
       messages: [
         { role: "system", content: system },
         { role: "user", content: `Evidence:\n${lines.join("\n")}` },
@@ -451,22 +541,49 @@ Max 8 ideas. Only use provided evidence ids.`;
   return (parsed.ideas || [])
     .map((row) => {
       const eids = row.evidence_ids || [];
-      return {
+      const evidence = eids.map((id) => idMap[id]).filter(Boolean);
+      const subs = new Set(evidence.map((e) => e.subreddit).filter(Boolean));
+      const idea = {
         title: row.title || "Untitled",
         problem: row.problem || "",
         who: row.who || "",
         why_now: row.why_now || "",
-        evidence_count: eids.length,
-        evidence_urls: eids.map((id) => idMap[id]?.url).filter(Boolean).slice(0, 8),
+        evidence_count: eids.length || evidence.length,
+        evidence_urls: evidence.map((e) => e.url).filter(Boolean).slice(0, 8),
         categories: row.categories || [],
         score: Number(row.score || 0),
+        wtp: row.wtp || majority(evidence.map((e) => e.willingness_to_pay), "medium"),
+        sentiment: row.sentiment || majority(evidence.map((e) => e.sentiment), "frustrated"),
+        severity: Number(row.severity || avg(evidence.map((e) => e.severity)) || 3),
+        reach_subs: subs.size || 1,
       };
+      idea.sam_m = estimateSam(idea);
+      return idea;
     })
     .sort((a, b) => b.score - a.score);
 }
 
+function majority(arr, fallback) {
+  const counts = {};
+  for (const x of arr.filter(Boolean)) counts[x] = (counts[x] || 0) + 1;
+  let best = fallback;
+  let n = 0;
+  for (const [k, v] of Object.entries(counts)) {
+    if (v > n) {
+      best = k;
+      n = v;
+    }
+  }
+  return best;
+}
+
+function avg(nums) {
+  const a = nums.filter((n) => typeof n === "number" && n > 0);
+  if (!a.length) return 0;
+  return a.reduce((s, n) => s + n, 0) / a.length;
+}
+
 function heuristicIdeas(candidates) {
-  // No-LLM fallback: group by top phrase
   const buckets = new Map();
   for (const c of candidates) {
     const key = (c.matched_phrases && c.matched_phrases[0]) || "general";
@@ -476,77 +593,235 @@ function heuristicIdeas(candidates) {
   return [...buckets.entries()]
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 8)
-    .map(([phrase, items], i) => ({
-      title: `Tooling around “${phrase}”`,
-      problem: items
-        .slice(0, 3)
-        .map((x) => x.title)
-        .join(" · "),
-      who: "Operators / founders in selected subs",
-      why_now: "Repeated public complaints in selected communities",
-      evidence_count: items.length,
-      evidence_urls: items.slice(0, 5).map((x) => x.url),
-      categories: ["other"],
-      score: Math.max(40, 90 - i * 6 + Math.min(10, items.length)),
-    }));
+    .map(([phrase, items], i) => {
+      const blob = items.map((x) => `${x.title}\n${x.body || ""}`).join("\n");
+      const idea = {
+        title: `Tooling around “${phrase}”`,
+        problem: items
+          .slice(0, 3)
+          .map((x) => x.title)
+          .join(" · "),
+        who: "Operators / founders in selected subs",
+        why_now: "Repeated public complaints in selected communities",
+        evidence_count: items.length,
+        evidence_urls: items.slice(0, 5).map((x) => x.url),
+        categories: ["other"],
+        score: Math.max(40, 90 - i * 6 + Math.min(10, items.length)),
+        wtp: inferWtp(blob),
+        sentiment: inferSentiment(blob),
+        severity: 3,
+        reach_subs: new Set(items.map((x) => x.subreddit)).size,
+      };
+      idea.sam_m = estimateSam(idea);
+      return idea;
+    });
 }
 
-function renderResults({ candidates, pains, ideas }) {
-  lastResult = { candidates, pains, ideas };
+function enrichPains(pains) {
+  return pains.map((p) => {
+    const blob = `${p.title || ""}\n${p.body || ""}\n${p.description || ""}`;
+    return {
+      ...p,
+      willingness_to_pay: inferWtp(blob, p.willingness_to_pay),
+      sentiment: p.sentiment || inferSentiment(blob),
+      severity: p.severity || 3,
+    };
+  });
+}
+
+function setArc(id, len, offset) {
+  const el = $(id);
+  if (!el) return;
+  el.setAttribute("stroke-dasharray", `${len} 314`);
+  el.setAttribute("stroke-dashoffset", String(-offset));
+}
+
+function renderCockpit({ candidates, pains, ideas, scanned }) {
+  lastResult = { candidates, pains, ideas, scanned };
   $("export-json").disabled = false;
   $("export-md").disabled = false;
 
   const confirmed = pains.filter((p) => p.is_pain);
-  $("summary").className = "summary";
-  $("summary").innerHTML = `
-    <strong>${candidates.length}</strong> phrase hits ·
-    <strong>${confirmed.length}</strong> LLM-confirmed pains ·
-    <strong>${ideas.length}</strong> idea clusters
-  `;
+  const wtpHigh = confirmed.filter((p) => p.willingness_to_pay === "high").length;
+  const wtpMid = confirmed.filter((p) => p.willingness_to_pay === "medium").length;
+  const wtpLow = confirmed.filter(
+    (p) => p.willingness_to_pay === "low" || p.willingness_to_pay === "unknown"
+  ).length;
+  const topSam = ideas.slice(0, 5).reduce((s, i) => s + (i.sam_m || 0), 0);
 
-  const ideasEl = $("ideas");
-  ideasEl.innerHTML = "<h2 style='margin-top:0'>Startup ideas</h2>";
+  $("s-scanned").textContent = scanned ? scanned.toLocaleString() : String(candidates.length);
+  $("s-hits").textContent = String(candidates.length);
+  $("s-confirmed").textContent = String(confirmed.length);
+  $("s-confirmed-d").textContent = candidates.length
+    ? `${Math.round((confirmed.length / Math.max(1, candidates.length)) * 100)}% of hits`
+    : "awaiting run";
+  $("s-ideas").textContent = String(ideas.length);
+  $("s-wtp").textContent = String(wtpHigh);
+  $("s-wtp-d").textContent = confirmed.length
+    ? `${Math.round((wtpHigh / confirmed.length) * 100)}% of confirmed`
+    : "of confirmed";
+  $("s-sam").textContent = topSam ? `$${topSam}M` : "—";
+  $("pain-count-pill").textContent = `${confirmed.length} confirmed`;
+
+  // WTP donut
+  const total = Math.max(1, confirmed.length);
+  const circ = 2 * Math.PI * 50; // ~314
+  const highLen = (wtpHigh / total) * circ;
+  const midLen = (wtpMid / total) * circ;
+  const lowLen = (wtpLow / total) * circ;
+  setArc("wtp-arc-high", highLen, 0);
+  setArc("wtp-arc-mid", midLen, highLen);
+  setArc("wtp-arc-low", lowLen, highLen + midLen);
+  $("wtp-total").textContent = String(confirmed.length);
+  $("wtp-high").textContent = String(wtpHigh);
+  $("wtp-mid").textContent = String(wtpMid);
+  $("wtp-low").textContent = String(wtpLow);
+  $("wtp-note").textContent = confirmed.length
+    ? `${Math.round((wtpHigh / total) * 100)}% show explicit or strong purchase intent. Frustration-only is down-weighted in idea scoring.`
+    : "Run a scan to separate buyable problems from venting.";
+
+  // Sentiment
+  const sentCounts = { frustrated: 0, annoyed: 0, hopeful: 0, neutral: 0 };
+  for (const p of confirmed.length ? confirmed : candidates) {
+    const s = p.sentiment || inferSentiment(`${p.title}\n${p.body || ""}`);
+    if (sentCounts[s] !== undefined) sentCounts[s]++;
+    else sentCounts.neutral++;
+  }
+  const sentTotal = Math.max(
+    1,
+    Object.values(sentCounts).reduce((a, b) => a + b, 0)
+  );
+  for (const k of Object.keys(sentCounts)) {
+    const pct = Math.round((sentCounts[k] / sentTotal) * 100);
+    const bar = $(`sent-${k}`);
+    const lab = $(`sent-${k}-p`);
+    if (bar) bar.style.width = `${pct}%`;
+    if (lab) lab.textContent = `${pct}%`;
+  }
+
+  // Ideas table
+  const tbody = $("ideas-tbody");
+  tbody.innerHTML = "";
   if (!ideas.length) {
-    ideasEl.innerHTML += `<p class="hint">No ideas yet. Add an LLM key for clustering, or broaden subreddits.</p>`;
-  }
-  for (const idea of ideas) {
-    const card = document.createElement("article");
-    card.className = "idea-card";
-    card.innerHTML = `
-      <h3><span class="score">${Math.round(idea.score)}</span> ${escapeHtml(idea.title)}</h3>
-      <div class="meta"><strong>Who:</strong> ${escapeHtml(idea.who || "—")}</div>
-      <div class="meta"><strong>Problem:</strong> ${escapeHtml(idea.problem || "—")}</div>
-      <div class="meta"><strong>Why now:</strong> ${escapeHtml(idea.why_now || "—")}</div>
-      <div class="meta">Evidence: ${idea.evidence_count || 0}
-        ${(idea.evidence_urls || [])
-          .slice(0, 3)
-          .map((u) => `<div><a href="${escapeAttr(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a></div>`)
-          .join("")}
-      </div>
-    `;
-    ideasEl.appendChild(card);
+    tbody.innerHTML =
+      '<tr><td colspan="7" class="empty-row">No ideas yet. Add an LLM key for clustering, or run Demo.</td></tr>';
+  } else {
+    for (const idea of ideas) {
+      const sc = idea.score || 0;
+      const scCls = sc >= 80 ? "hi" : sc >= 60 ? "mid" : "lo";
+      const wtp = idea.wtp || "medium";
+      const sent = idea.sentiment || "frustrated";
+      const tr = document.createElement("tr");
+      tr.className = "hov";
+      tr.innerHTML = `
+        <td>
+          <div class="t-name">${escapeHtml(idea.title)}</div>
+          <div class="t-why">${escapeHtml((idea.who || idea.categories?.join(" · ") || "").slice(0, 80))}</div>
+        </td>
+        <td><span class="score ${scCls}">${Math.round(sc)}</span></td>
+        <td>
+          <div>${escapeHtml((idea.problem || "").slice(0, 160))}</div>
+          <div class="bar"><i style="width:${Math.min(100, sc)}%;background:var(--${sc >= 80 ? "emerald" : sc >= 60 ? "amber" : "faint"})"></i></div>
+        </td>
+        <td><span class="tag wtp-${wtp === "high" ? "high" : wtp === "medium" ? "mid" : "low"}">${escapeHtml(wtp)}</span></td>
+        <td><span class="tag sent-${escapeAttr(sent)}">${escapeHtml(sent)}</span></td>
+        <td><div class="mv">$${idea.sam_m || 0}M SAM</div></td>
+        <td>
+          <div class="mv">${idea.evidence_count || 0} posts</div>
+          <div class="mv" style="margin-top:2px">${idea.reach_subs || 1} subs</div>
+        </td>`;
+      tbody.appendChild(tr);
+    }
   }
 
-  const painsEl = $("pains");
-  painsEl.innerHTML = "<h2>Pain signals</h2>";
-  const list = confirmed.length
-    ? confirmed.sort((a, b) => b.severity - a.severity)
-    : candidates.slice(0, 25);
-  for (const p of list) {
-    const card = document.createElement("article");
-    card.className = "pain-card";
-    const head = p.description || p.title;
-    card.innerHTML = `
-      <div>
-        ${p.severity ? `<span class="sev">${p.severity}/5 · ${escapeHtml(p.category || "")}</span> ` : ""}
-        <strong>r/${escapeHtml(p.subreddit)}</strong> · ${escapeHtml(p.source || "post")}
-      </div>
-      <div class="meta">${escapeHtml(head)}</div>
-      <div class="meta">phrases: ${escapeHtml((p.matched_phrases || []).join("; "))}</div>
-      ${p.url ? `<a href="${escapeAttr(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.url)}</a>` : ""}
-    `;
-    painsEl.appendChild(card);
+  // Pain ranking
+  const painEl = $("pain-rank");
+  const ranked = (confirmed.length ? confirmed : candidates.slice(0, 12))
+    .slice()
+    .sort((a, b) => {
+      const sa = (a.severity || 1) * 10 + Math.log10(1 + (a.score || 0));
+      const sb = (b.severity || 1) * 10 + Math.log10(1 + (b.score || 0));
+      return sb - sa;
+    })
+    .slice(0, 8);
+  if (!ranked.length) {
+    painEl.innerHTML = '<div class="empty-inline">No pains yet.</div>';
+  } else {
+    const maxSev = Math.max(...ranked.map((p) => p.severity || 1), 1);
+    painEl.innerHTML = `
+      <div class="legend">
+        <span><i style="background:var(--emerald)"></i>high severity</span>
+        <span><i style="background:var(--amber)"></i>medium</span>
+        <span><i style="background:var(--faint)"></i>low</span>
+      </div>`;
+    ranked.forEach((p, i) => {
+      const sev = p.severity || 1;
+      const width = Math.round((sev / Math.max(5, maxSev)) * 100);
+      const color = sev >= 4 ? "var(--emerald)" : sev >= 3 ? "var(--amber)" : "var(--faint)";
+      const div = document.createElement("div");
+      div.className = "pain";
+      div.innerHTML = `
+        <div class="rank">${i + 1}</div>
+        <div class="body">
+          <div class="txt">${escapeHtml(p.description || p.title)}</div>
+          <div class="meta">r/${escapeHtml(p.subreddit || "?")} · ${escapeHtml(p.willingness_to_pay || "—")} WTP · ${
+            p.url ? `<a href="${escapeAttr(p.url)}" target="_blank" rel="noopener">view</a>` : "—"
+          }</div>
+        </div>
+        <div class="bar"><i style="width:${width}%;background:${color}"></i></div>`;
+      painEl.appendChild(div);
+    });
   }
+
+  // SAM list
+  const samEl = $("sam-list");
+  if (!ideas.length) {
+    samEl.innerHTML = '<div class="empty-inline">No ideas yet.</div>';
+  } else {
+    const maxSam = Math.max(...ideas.map((i) => i.sam_m || 1), 1);
+    samEl.innerHTML = "";
+    for (const idea of ideas.slice(0, 5)) {
+      const row = document.createElement("div");
+      row.className = "sam-row";
+      const w = Math.round(((idea.sam_m || 0) / maxSam) * 100);
+      row.innerHTML = `
+        <div class="top"><span class="name">${escapeHtml(idea.title)}</span><span class="val">$${idea.sam_m || 0}M</span></div>
+        <div class="bar"><i style="width:${w}%;background:var(--emerald)"></i></div>`;
+      samEl.appendChild(row);
+    }
+    const note = document.createElement("p");
+    note.className = "note";
+    note.textContent =
+      "Method: evidence × severity × WTP multiplier × rough ARPU. Directional only — not a market survey.";
+    samEl.appendChild(note);
+  }
+
+  // Source breakdown
+  const srcEl = $("source-bars");
+  const srcCounts = {};
+  for (const c of candidates) {
+    const s = c.subreddit || "unknown";
+    srcCounts[s] = (srcCounts[s] || 0) + 1;
+  }
+  const srcEntries = Object.entries(srcCounts).sort((a, b) => b[1] - a[1]);
+  const srcTotal = Math.max(1, candidates.length);
+  if (!srcEntries.length) {
+    srcEl.innerHTML = '<div class="empty-inline">No sources yet.</div>';
+  } else {
+    srcEl.innerHTML = "";
+    for (const [sub, n] of srcEntries.slice(0, 8)) {
+      const pct = Math.round((n / srcTotal) * 100);
+      const row = document.createElement("div");
+      row.className = "sent-row";
+      row.innerHTML = `
+        <span class="lbl" style="width:90px">r/${escapeHtml(sub)}</span>
+        <div class="bar"><i style="width:${pct}%;background:var(--accent)"></i></div>
+        <span class="pct">${pct}%</span>`;
+      srcEl.appendChild(row);
+    }
+  }
+
+  setPill("pill-status", "ready", "live");
 }
 
 function escapeHtml(s) {
@@ -568,7 +843,7 @@ function getLlmConfig() {
   return { base, key, model };
 }
 
-async function runPipeline(candidates) {
+async function runPipeline(candidates, scanned = 0) {
   const maxClassify = Number($("max-classify").value || 0);
   const llm = getLlmConfig();
   let pains = [];
@@ -578,17 +853,26 @@ async function runPipeline(candidates) {
     const slice = candidates.slice(0, maxClassify);
     for (let i = 0; i < slice.length; i++) {
       setStatus(`LLM classify ${i + 1}/${slice.length}…`);
+      setPill("pill-status", `llm ${i + 1}/${slice.length}`, "live");
       try {
         pains.push(await classifyItem(slice[i], llm));
       } catch (e) {
         setStatus(String(e.message || e), "err");
-        // continue with heuristic
-        pains = candidates.map((c) => ({ ...c, is_pain: true, description: c.title, severity: 3, category: "other" }));
+        pains = enrichPains(
+          candidates.map((c) => ({
+            ...c,
+            is_pain: true,
+            description: c.title,
+            severity: 3,
+            category: "other",
+          }))
+        );
         ideas = heuristicIdeas(candidates);
-        renderResults({ candidates, pains, ideas });
+        renderCockpit({ candidates, pains, ideas, scanned });
         return;
       }
     }
+    pains = enrichPains(pains);
     setStatus("Clustering ideas…");
     try {
       ideas = await clusterIdeas(pains, llm);
@@ -596,21 +880,23 @@ async function runPipeline(candidates) {
       ideas = heuristicIdeas(pains.filter((p) => p.is_pain));
     }
   } else {
-    pains = candidates.map((c) => ({
-      ...c,
-      is_pain: true,
-      description: c.title,
-      severity: 0,
-      category: "unscored",
-    }));
+    pains = enrichPains(
+      candidates.map((c) => ({
+        ...c,
+        is_pain: true,
+        description: c.title,
+        severity: 3,
+        category: "unscored",
+      }))
+    );
     ideas = heuristicIdeas(candidates);
     if (!llm) {
-      setStatus("Done (phrase filter only — add LLM key for real classify).", "ok");
+      setStatus("Done (phrase + heuristics — add LLM key for full classify).", "ok");
     } else {
       setStatus("Done.", "ok");
     }
   }
-  renderResults({ candidates, pains, ideas });
+  renderCockpit({ candidates, pains, ideas, scanned: scanned || lastScannedCount });
   if (llm) setStatus("Done.", "ok");
 }
 
@@ -622,15 +908,18 @@ async function onRunScan() {
   }
   $("run-scan").disabled = true;
   $("run-demo").disabled = true;
+  updateHeaderPills();
   try {
     const days = Number($("days").value || 30);
     const limit = Number($("limit").value || 40);
     const comments = $("comments").value === "1";
+    setPill("pill-status", "scanning", "live");
     const candidates = await scanArctic(subs, { days, limit, comments });
     setStatus(`Phrase hits: ${candidates.length}. Processing…`);
-    await runPipeline(candidates);
+    await runPipeline(candidates, lastScannedCount);
   } catch (e) {
     setStatus(String(e.message || e), "err");
+    setPill("pill-status", "error", "err");
   } finally {
     $("run-scan").disabled = false;
     $("run-demo").disabled = false;
@@ -641,13 +930,15 @@ async function onRunDemo() {
   $("run-scan").disabled = true;
   $("run-demo").disabled = true;
   try {
+    setPill("pill-status", "demo", "live");
     const candidates = DEMO.map((d) => ({
       ...d,
       matched_phrases: matchPhrases(`${d.title}\n${d.body}`),
       created_utc: Date.now() / 1000,
     })).filter((d) => d.matched_phrases.length);
+    lastScannedCount = DEMO.length;
     setStatus(`Demo fixtures: ${candidates.length}`);
-    await runPipeline(candidates);
+    await runPipeline(candidates, DEMO.length);
   } finally {
     $("run-scan").disabled = false;
     $("run-demo").disabled = false;
@@ -669,18 +960,18 @@ function exportMd() {
   if (!lastResult) return;
   const { ideas, pains, candidates } = lastResult;
   const confirmed = pains.filter((p) => p.is_pain);
-  let md = `# Painpoint AI report\n\n`;
+  let md = `# Painpoint AI cockpit report\n\n`;
   md += `Candidates: ${candidates.length} · Confirmed: ${confirmed.length} · Ideas: ${ideas.length}\n\n`;
   md += `## Ideas\n\n`;
   for (const idea of ideas) {
-    md += `### ${idea.title} (${Math.round(idea.score)})\n`;
-    md += `- Who: ${idea.who}\n- Problem: ${idea.problem}\n- Why now: ${idea.why_now}\n`;
+    md += `### ${idea.title} (${Math.round(idea.score)}) · WTP ${idea.wtp} · ~$${idea.sam_m}M SAM\n`;
+    md += `- Who: ${idea.who}\n- Problem: ${idea.problem}\n- Why now: ${idea.why_now}\n- Sentiment: ${idea.sentiment}\n`;
     for (const u of idea.evidence_urls || []) md += `- ${u}\n`;
     md += `\n`;
   }
   md += `## Pains\n\n`;
   for (const p of confirmed.length ? confirmed : candidates.slice(0, 20)) {
-    md += `- r/${p.subreddit}: ${p.description || p.title}\n  - ${p.url || ""}\n`;
+    md += `- r/${p.subreddit}: ${p.description || p.title} [${p.willingness_to_pay}/${p.sentiment}]\n  - ${p.url || ""}\n`;
   }
   const blob = new Blob([md], { type: "text/markdown" });
   const a = document.createElement("a");
@@ -693,10 +984,12 @@ function boot() {
   renderPresets();
   renderSelected();
   loadLlmSettings();
+  updateHeaderPills();
   $("sub-add").addEventListener("click", addSubFromInput);
   $("sub-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") addSubFromInput();
   });
+  $("days").addEventListener("change", updateHeaderPills);
   $("save-llm").addEventListener("click", saveLlmSettings);
   $("clear-llm").addEventListener("click", clearLlmSettings);
   $("run-scan").addEventListener("click", onRunScan);
