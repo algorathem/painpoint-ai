@@ -539,17 +539,26 @@ Max 8 ideas. Only use provided evidence ids. Prefer high-WTP clusters.`;
   const parsed = JSON.parse(m ? m[0] : "{}");
   const idMap = Object.fromEntries(truePains.map((p) => [p.id, p]));
   return (parsed.ideas || [])
-    .map((row) => {
-      const eids = row.evidence_ids || [];
-      const evidence = eids.map((id) => idMap[id]).filter(Boolean);
+    .map((row, ri) => {
+      let eids = row.evidence_ids || [];
+      let evidence = eids.map((id) => idMap[id]).filter(Boolean);
+      // If model omitted ids, attach top true pains as evidence so drawer still has links
+      if (!evidence.length) {
+        evidence = truePains.slice(ri * 2, ri * 2 + 4);
+        eids = evidence.map((e) => e.id);
+      }
       const subs = new Set(evidence.map((e) => e.subreddit).filter(Boolean));
+      const quotes = evidence.slice(0, 4).map(toQuote);
       const idea = {
+        id: `idea-${(row.title || "x").slice(0, 24)}-${eids[0] || Math.random().toString(36).slice(2, 7)}`,
         title: row.title || "Untitled",
-        problem: row.problem || "",
-        who: row.who || "",
-        why_now: row.why_now || "",
-        evidence_count: eids.length || evidence.length,
+        problem: row.problem || synthesizeProblem(evidence),
+        who: row.who || guessWho(evidence),
+        why_now: row.why_now || "Repeated public complaints with no clear product winner.",
+        evidence_count: Math.max(eids.length, evidence.length),
         evidence_urls: evidence.map((e) => e.url).filter(Boolean).slice(0, 8),
+        evidence_items: evidence.slice(0, 8).map(toEvidenceItem),
+        quotes,
         categories: row.categories || [],
         score: Number(row.score || 0),
         wtp: row.wtp || majority(evidence.map((e) => e.willingness_to_pay), "medium"),
@@ -558,6 +567,7 @@ Max 8 ideas. Only use provided evidence ids. Prefer high-WTP clusters.`;
         reach_subs: subs.size || 1,
       };
       idea.sam_m = estimateSam(idea);
+      idea.validation = buildValidation(idea);
       return idea;
     })
     .sort((a, b) => b.score - a.score);
@@ -583,6 +593,114 @@ function avg(nums) {
   return a.reduce((s, n) => s + n, 0) / a.length;
 }
 
+function snip(text, n = 180) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+}
+
+function toQuote(item) {
+  const body = snip(item.body || item.description || "", 220);
+  const title = snip(item.title || "", 120);
+  return {
+    text: body || title,
+    title,
+    subreddit: item.subreddit || "",
+    url: item.url || "",
+    score: item.score || 0,
+    wtp: item.willingness_to_pay || inferWtp(`${item.title}\n${item.body || ""}`),
+    sentiment: item.sentiment || inferSentiment(`${item.title}\n${item.body || ""}`),
+  };
+}
+
+function toEvidenceItem(item) {
+  return {
+    id: item.id,
+    title: item.title || item.description || "(untitled)",
+    body: snip(item.body || item.description || "", 280),
+    subreddit: item.subreddit || "",
+    url: item.url || "",
+    score: item.score || 0,
+    num_comments: item.num_comments || 0,
+    source: item.source || "post",
+    wtp: item.willingness_to_pay || inferWtp(`${item.title}\n${item.body || ""}`),
+    sentiment: item.sentiment || inferSentiment(`${item.title}\n${item.body || ""}`),
+    severity: item.severity || 0,
+    phrases: item.matched_phrases || [],
+  };
+}
+
+function synthesizeProblem(items) {
+  if (!items.length) return "No concrete problem text available.";
+  const top = [...items].sort(
+    (a, b) => (b.score || 0) + (b.num_comments || 0) - ((a.score || 0) + (a.num_comments || 0))
+  )[0];
+  const quote = snip(top.body || top.description || top.title, 200);
+  const who = guessWho(items);
+  return `${who} report: “${quote}” (${items.length} related threads across ${new Set(items.map((i) => i.subreddit)).size} subreddits).`;
+}
+
+function guessWho(items) {
+  const subs = items.map((i) => (i.subreddit || "").toLowerCase());
+  if (subs.some((s) => s.includes("devops") || s.includes("sre"))) return "Platform / FinOps engineers";
+  if (subs.some((s) => s.includes("sales"))) return "Sales ops and AEs";
+  if (subs.some((s) => s.includes("smallbusiness") || s.includes("entrepreneur"))) return "SMB owners and operators";
+  if (subs.some((s) => s.includes("startups") || s === "saas")) return "SaaS founders and operators";
+  return "Operators in the scanned communities";
+}
+
+function titleFromItems(phrase, items) {
+  const top = [...items].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+  const t = (top?.title || "").replace(/^\(comment\)\s*/i, "");
+  // Prefer a product-shaped title from the strongest post when possible
+  if (t && t.length > 12 && t.length < 90 && !/^tired of|^why is|^i wish/i.test(t)) {
+    return t;
+  }
+  const map = {
+    "i'd pay for": "Paid fix for a recurring workflow gap",
+    "looking for a tool": "Missing tool buyers are actively hunting",
+    "is there a tool": "Unmet tool search with no clear winner",
+    "spreadsheet hell": "Spreadsheet replacement for a broken ops process",
+    "takes forever": "Time-sink automation for a manual bottleneck",
+    bottleneck: "Bottleneck remover for a stuck workflow",
+    "need automation": "Automation layer for a repetitive manual job",
+  };
+  return map[phrase] || `Product angle: ${phrase}`;
+}
+
+function buildValidation(idea) {
+  const hasLinks = (idea.evidence_urls || []).filter(Boolean).length >= 2;
+  const hasQuote = (idea.quotes || []).some((q) => (q.text || "").length > 40);
+  const wtpOk = idea.wtp === "high" || idea.wtp === "medium";
+  return [
+    {
+      id: "evidence",
+      label: "≥2 independent Reddit threads with links",
+      pass: hasLinks,
+    },
+    {
+      id: "quote",
+      label: "At least one concrete user quote (not just a title)",
+      pass: hasQuote,
+    },
+    {
+      id: "wtp",
+      label: "WTP signal is medium or high (not pure venting)",
+      pass: wtpOk,
+    },
+    {
+      id: "reach",
+      label: "Appears in ≥2 subreddits OR ≥3 evidence posts",
+      pass: (idea.reach_subs || 0) >= 2 || (idea.evidence_count || 0) >= 3,
+    },
+    {
+      id: "severity",
+      label: "Severity ≥3 (blocks real work / money / time)",
+      pass: (idea.severity || 0) >= 3,
+    },
+  ];
+}
+
 function heuristicIdeas(candidates) {
   const buckets = new Map();
   for (const c of candidates) {
@@ -594,25 +712,29 @@ function heuristicIdeas(candidates) {
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 8)
     .map(([phrase, items], i) => {
-      const blob = items.map((x) => `${x.title}\n${x.body || ""}`).join("\n");
+      const sorted = [...items].sort(
+        (a, b) => (b.score || 0) + (b.num_comments || 0) * 2 - ((a.score || 0) + (a.num_comments || 0) * 2)
+      );
+      const blob = sorted.map((x) => `${x.title}\n${x.body || ""}`).join("\n");
       const idea = {
-        title: `Tooling around “${phrase}”`,
-        problem: items
-          .slice(0, 3)
-          .map((x) => x.title)
-          .join(" · "),
-        who: "Operators / founders in selected subs",
-        why_now: "Repeated public complaints in selected communities",
-        evidence_count: items.length,
-        evidence_urls: items.slice(0, 5).map((x) => x.url),
-        categories: ["other"],
-        score: Math.max(40, 90 - i * 6 + Math.min(10, items.length)),
+        id: `idea-h-${i}-${phrase.slice(0, 12)}`,
+        title: titleFromItems(phrase, sorted),
+        problem: synthesizeProblem(sorted),
+        who: guessWho(sorted),
+        why_now: `“${phrase}” shows up repeatedly; no dominant solution named in-thread.`,
+        evidence_count: sorted.length,
+        evidence_urls: sorted.slice(0, 8).map((x) => x.url).filter(Boolean),
+        evidence_items: sorted.slice(0, 8).map(toEvidenceItem),
+        quotes: sorted.slice(0, 4).map(toQuote),
+        categories: [phrase],
+        score: Math.max(40, 90 - i * 6 + Math.min(12, sorted.length * 2)),
         wtp: inferWtp(blob),
         sentiment: inferSentiment(blob),
-        severity: 3,
-        reach_subs: new Set(items.map((x) => x.subreddit)).size,
+        severity: Math.min(5, 2 + Math.round(Math.log2(1 + sorted.length))),
+        reach_subs: new Set(sorted.map((x) => x.subreddit)).size,
       };
       idea.sam_m = estimateSam(idea);
+      idea.validation = buildValidation(idea);
       return idea;
     });
 }
@@ -706,21 +828,27 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
     tbody.innerHTML =
       '<tr><td colspan="7" class="empty-row">No ideas yet. Add an LLM key for clustering, or run Demo.</td></tr>';
   } else {
-    for (const idea of ideas) {
+    ideas.forEach((idea, idx) => {
       const sc = idea.score || 0;
       const scCls = sc >= 80 ? "hi" : sc >= 60 ? "mid" : "lo";
       const wtp = idea.wtp || "medium";
       const sent = idea.sentiment || "frustrated";
+      const topUrl = (idea.evidence_urls || []).find(Boolean) || "";
+      const quote = (idea.quotes && idea.quotes[0] && idea.quotes[0].text) || "";
       const tr = document.createElement("tr");
       tr.className = "hov";
+      tr.tabIndex = 0;
+      tr.dataset.kind = "idea";
+      tr.dataset.idx = String(idx);
       tr.innerHTML = `
         <td>
-          <div class="t-name">${escapeHtml(idea.title)}</div>
-          <div class="t-why">${escapeHtml((idea.who || idea.categories?.join(" · ") || "").slice(0, 80))}</div>
+          <div class="t-name">${escapeHtml(idea.title)}<span class="open-hint">open →</span></div>
+          <div class="t-why">${escapeHtml((idea.who || "").slice(0, 90))}</div>
         </td>
         <td><span class="score ${scCls}">${Math.round(sc)}</span></td>
         <td>
-          <div>${escapeHtml((idea.problem || "").slice(0, 160))}</div>
+          <div>${escapeHtml((idea.problem || "").slice(0, 180))}</div>
+          ${quote ? `<div class="t-why" style="margin-top:4px">“${escapeHtml(quote.slice(0, 100))}”</div>` : ""}
           <div class="bar"><i style="width:${Math.min(100, sc)}%;background:var(--${sc >= 80 ? "emerald" : sc >= 60 ? "amber" : "faint"})"></i></div>
         </td>
         <td><span class="tag wtp-${wtp === "high" ? "high" : wtp === "medium" ? "mid" : "low"}">${escapeHtml(wtp)}</span></td>
@@ -729,9 +857,20 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
         <td>
           <div class="mv">${idea.evidence_count || 0} posts</div>
           <div class="mv" style="margin-top:2px">${idea.reach_subs || 1} subs</div>
+          ${topUrl ? `<div style="margin-top:4px"><a class="linkish" href="${escapeAttr(topUrl)}" target="_blank" rel="noopener" data-stop="1">top thread ↗</a></div>` : ""}
         </td>`;
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("[data-stop]")) return;
+        openIdeaDrawer(idea);
+      });
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openIdeaDrawer(idea);
+        }
+      });
       tbody.appendChild(tr);
-    }
+    });
   }
 
   // Pain ranking
@@ -743,7 +882,7 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
       const sb = (b.severity || 1) * 10 + Math.log10(1 + (b.score || 0));
       return sb - sa;
     })
-    .slice(0, 8);
+    .slice(0, 10);
   if (!ranked.length) {
     painEl.innerHTML = '<div class="empty-inline">No pains yet.</div>';
   } else {
@@ -753,22 +892,39 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
         <span><i style="background:var(--emerald)"></i>high severity</span>
         <span><i style="background:var(--amber)"></i>medium</span>
         <span><i style="background:var(--faint)"></i>low</span>
+        <span style="color:var(--faint)">click a row for full quote + Reddit link</span>
       </div>`;
     ranked.forEach((p, i) => {
       const sev = p.severity || 1;
       const width = Math.round((sev / Math.max(5, maxSev)) * 100);
       const color = sev >= 4 ? "var(--emerald)" : sev >= 3 ? "var(--amber)" : "var(--faint)";
+      const snippet = snip(p.body || p.description || "", 140);
       const div = document.createElement("div");
       div.className = "pain";
+      div.tabIndex = 0;
       div.innerHTML = `
         <div class="rank">${i + 1}</div>
         <div class="body">
           <div class="txt">${escapeHtml(p.description || p.title)}</div>
-          <div class="meta">r/${escapeHtml(p.subreddit || "?")} · ${escapeHtml(p.willingness_to_pay || "—")} WTP · ${
-            p.url ? `<a href="${escapeAttr(p.url)}" target="_blank" rel="noopener">view</a>` : "—"
-          }</div>
+          ${snippet && snippet !== (p.description || p.title) ? `<div class="meta" style="color:var(--muted)">“${escapeHtml(snippet)}”</div>` : ""}
+          <div class="meta">r/${escapeHtml(p.subreddit || "?")} · ${escapeHtml(p.willingness_to_pay || "—")} WTP · ${escapeHtml(p.sentiment || "—")} · ${
+            p.url
+              ? `<a href="${escapeAttr(p.url)}" target="_blank" rel="noopener" data-stop="1">open Reddit ↗</a>`
+              : "no link"
+          } · <span class="linkish">details →</span></div>
         </div>
         <div class="bar"><i style="width:${width}%;background:${color}"></i></div>`;
+      const open = () => openPainDrawer(p);
+      div.addEventListener("click", (e) => {
+        if (e.target.closest("[data-stop]")) return;
+        open();
+      });
+      div.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      });
       painEl.appendChild(div);
     });
   }
@@ -783,16 +939,18 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
     for (const idea of ideas.slice(0, 5)) {
       const row = document.createElement("div");
       row.className = "sam-row";
+      row.style.cursor = "pointer";
       const w = Math.round(((idea.sam_m || 0) / maxSam) * 100);
       row.innerHTML = `
         <div class="top"><span class="name">${escapeHtml(idea.title)}</span><span class="val">$${idea.sam_m || 0}M</span></div>
         <div class="bar"><i style="width:${w}%;background:var(--emerald)"></i></div>`;
+      row.addEventListener("click", () => openIdeaDrawer(idea));
       samEl.appendChild(row);
     }
     const note = document.createElement("p");
     note.className = "note";
     note.textContent =
-      "Method: evidence × severity × WTP multiplier × rough ARPU. Directional only — not a market survey.";
+      "Click a bar to open evidence. SAM = evidence × severity × WTP × rough ARPU — directional only.";
     samEl.appendChild(note);
   }
 
@@ -822,6 +980,137 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
   }
 
   setPill("pill-status", "ready", "live");
+}
+
+function closeDrawer() {
+  const d = $("drawer");
+  const b = $("drawer-backdrop");
+  if (d) {
+    d.hidden = true;
+    d.setAttribute("aria-hidden", "true");
+  }
+  if (b) b.hidden = true;
+}
+
+function openDrawerShell(kind, title, bodyHtml) {
+  $("drawer-kind").textContent = kind;
+  $("drawer-title").textContent = title;
+  $("drawer-body").innerHTML = bodyHtml;
+  $("drawer").hidden = false;
+  $("drawer").setAttribute("aria-hidden", "false");
+  $("drawer-backdrop").hidden = false;
+}
+
+function openIdeaDrawer(idea) {
+  const checks = (idea.validation || buildValidation(idea))
+    .map(
+      (c) =>
+        `<li><input type="checkbox" ${c.pass ? "checked" : ""} disabled /><div><strong style="color:${c.pass ? "var(--emerald)" : "var(--amber)"}">${c.pass ? "Pass" : "Gap"}</strong> — ${escapeHtml(c.label)}</div></li>`
+    )
+    .join("");
+  const quotes = (idea.quotes || [])
+    .filter((q) => q.text)
+    .slice(0, 4)
+    .map(
+      (q) => `
+      <div class="quote-block">
+        <div class="q">“${escapeHtml(q.text)}”</div>
+        <div class="src">r/${escapeHtml(q.subreddit || "?")} · ${escapeHtml(q.wtp || "")} WTP · ${
+          q.url ? `<a href="${escapeAttr(q.url)}" target="_blank" rel="noopener">open thread ↗</a>` : "no url"
+        }</div>
+      </div>`
+    )
+    .join("");
+  const evidence = (idea.evidence_items || [])
+    .slice(0, 8)
+    .map(
+      (e) => `
+      <div class="ev-item">
+        <div class="title">${escapeHtml(e.title)}</div>
+        <div class="meta">r/${escapeHtml(e.subreddit)} · ${e.source} · score ${e.score} · ${escapeHtml(e.wtp)} WTP · ${escapeHtml(e.sentiment)}</div>
+        ${e.body ? `<div class="snip">${escapeHtml(e.body)}</div>` : ""}
+        ${e.url ? `<div style="margin-top:6px"><a href="${escapeAttr(e.url)}" target="_blank" rel="noopener">Open on Reddit ↗</a></div>` : "<div class='snip'>No permalink available</div>"}
+      </div>`
+    )
+    .join("");
+  const searchQ = encodeURIComponent(
+    `${idea.title} ${idea.who || ""} SaaS tool`.slice(0, 80)
+  );
+  const body = `
+    <div class="drawer-section">
+      <h3>Problem (concrete)</h3>
+      <div class="problem-block">${escapeHtml(idea.problem || "—")}</div>
+    </div>
+    <div class="drawer-section">
+      <h3>Snapshot</h3>
+      <div class="drawer-kv">
+        <div class="box"><div class="k">Buyer</div><div class="v">${escapeHtml(idea.who || "—")}</div></div>
+        <div class="box"><div class="k">Score / SAM</div><div class="v">${Math.round(idea.score || 0)} · $${idea.sam_m || 0}M</div></div>
+        <div class="box"><div class="k">WTP / Sentiment</div><div class="v">${escapeHtml(idea.wtp || "—")} · ${escapeHtml(idea.sentiment || "—")}</div></div>
+        <div class="box"><div class="k">Evidence / reach</div><div class="v">${idea.evidence_count || 0} posts · ${idea.reach_subs || 1} subs</div></div>
+      </div>
+      <p class="note" style="margin-top:8px">${escapeHtml(idea.why_now || "")}</p>
+    </div>
+    <div class="drawer-section">
+      <h3>User quotes</h3>
+      ${quotes || '<div class="empty-inline">No long-form body quotes — open evidence links below.</div>'}
+    </div>
+    <div class="drawer-section">
+      <h3>Evidence threads</h3>
+      <div class="ev-list">${evidence || '<div class="empty-inline">No evidence items attached.</div>'}</div>
+    </div>
+    <div class="drawer-section">
+      <h3>Validation checklist</h3>
+      <ul class="check-list">${checks}</ul>
+      <div class="drawer-actions">
+        ${(idea.evidence_urls || [])
+          .filter(Boolean)
+          .slice(0, 3)
+          .map(
+            (u, i) =>
+              `<a class="btn ghost" href="${escapeAttr(u)}" target="_blank" rel="noopener">Thread ${i + 1} ↗</a>`
+          )
+          .join("")}
+        <a class="btn ghost" href="https://www.reddit.com/search/?q=${searchQ}" target="_blank" rel="noopener">More on Reddit ↗</a>
+        <a class="btn ghost" href="https://www.google.com/search?q=${searchQ}" target="_blank" rel="noopener">Competitor search ↗</a>
+      </div>
+    </div>`;
+  openDrawerShell("Startup idea · validation", idea.title || "Idea", body);
+}
+
+function openPainDrawer(p) {
+  const blob = `${p.title || ""}\n${p.body || ""}`;
+  const full = snip(p.body || p.description || p.title || "", 600);
+  const body = `
+    <div class="drawer-section">
+      <h3>What they said</h3>
+      <div class="problem-block">${escapeHtml(full || p.title || "—")}</div>
+    </div>
+    <div class="drawer-section">
+      <h3>Snapshot</h3>
+      <div class="drawer-kv">
+        <div class="box"><div class="k">Subreddit</div><div class="v">r/${escapeHtml(p.subreddit || "?")}</div></div>
+        <div class="box"><div class="k">Type</div><div class="v">${escapeHtml(p.source || "post")}</div></div>
+        <div class="box"><div class="k">WTP</div><div class="v">${escapeHtml(p.willingness_to_pay || inferWtp(blob))}</div></div>
+        <div class="box"><div class="k">Sentiment</div><div class="v">${escapeHtml(p.sentiment || inferSentiment(blob))}</div></div>
+        <div class="box"><div class="k">Severity / score</div><div class="v">${p.severity || "—"} / ${p.score || 0}</div></div>
+        <div class="box"><div class="k">Comments</div><div class="v">${p.num_comments || 0}</div></div>
+      </div>
+    </div>
+    <div class="drawer-section">
+      <h3>Matched phrases</h3>
+      <div>${(p.matched_phrases || []).map((x) => `<span class="tag cat">${escapeHtml(x)}</span>`).join(" ") || "—"}</div>
+    </div>
+    <div class="drawer-section">
+      <h3>Go deeper</h3>
+      <div class="drawer-actions">
+        ${p.url ? `<a class="btn" href="${escapeAttr(p.url)}" target="_blank" rel="noopener">Open Reddit thread ↗</a>` : ""}
+        <a class="btn ghost" href="https://www.reddit.com/r/${escapeAttr(p.subreddit || "SaaS")}/" target="_blank" rel="noopener">Browse r/${escapeHtml(p.subreddit || "SaaS")} ↗</a>
+        <a class="btn ghost" href="https://www.reddit.com/search/?q=${encodeURIComponent(p.title || p.description || "")}" target="_blank" rel="noopener">Search similar ↗</a>
+      </div>
+      ${p.description && p.description !== p.title ? `<p class="note" style="margin-top:10px">LLM summary: ${escapeHtml(p.description)}</p>` : ""}
+    </div>`;
+  openDrawerShell("Pain signal · evidence", p.title || p.description || "Pain", body);
 }
 
 function escapeHtml(s) {
@@ -996,6 +1285,11 @@ function boot() {
   $("run-demo").addEventListener("click", onRunDemo);
   $("export-json").addEventListener("click", exportJson);
   $("export-md").addEventListener("click", exportMd);
+  $("drawer-close")?.addEventListener("click", closeDrawer);
+  $("drawer-backdrop")?.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDrawer();
+  });
 }
 
 boot();

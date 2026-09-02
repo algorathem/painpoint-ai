@@ -184,12 +184,25 @@
         <h3 style="margin:0 0 8px;color:var(--text)">Data notes</h3>
         <p class="note" style="margin:0">
           Default source is <a href="https://arctic-shift.photon-reddit.com/" target="_blank" rel="noopener">Arctic Shift</a> (public Reddit archives).
-          Official Reddit API is free with OAuth limits; unauthenticated JSON is often blocked.
+          Click any idea or pain row to open evidence, Reddit threads, quotes, and a validation checklist.
           SAM figures are directional heuristics, not financial advice. LLM keys stay in your browser only.
         </p>
       </div>
     </section>
   </main>
+
+  <!-- Evidence / validation drawer -->
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+  <aside id="drawer" class="drawer" hidden aria-hidden="true">
+    <div class="drawer-h">
+      <div>
+        <div class="sec-label" id="drawer-kind">Evidence</div>
+        <h2 id="drawer-title">—</h2>
+      </div>
+      <button type="button" id="drawer-close" class="btn ghost" aria-label="Close">Close</button>
+    </div>
+    <div class="drawer-b" id="drawer-body"></div>
+  </aside>
 
   <script type="module" src="./app.js"></script>
 </body>
