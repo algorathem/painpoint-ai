@@ -4,6 +4,20 @@
  */
 
 const ARCTIC = "https://arctic-shift.photon-reddit.com";
+const HN_API = "https://hn.algolia.com/api/v1/search";
+
+const HN_QUERIES = [
+  "I wish there was a tool",
+  "looking for a tool",
+  "is there a tool that",
+  "I'd pay for",
+  "frustrated with",
+  "manual process spreadsheet",
+  "need automation for",
+  "alternative to",
+  "waste of time SaaS",
+  "anyone recommend a tool",
+];
 
 const PRESETS = [
   "SaaS",
@@ -409,7 +423,7 @@ async function scanArctic(subs, { days, limit, comments }) {
   const seen = new Set();
   let scanned = 0;
   for (const sub of subs) {
-    setStatus(`Fetching r/${sub} posts…`);
+    setStatus(`Reddit/Arctic: r/${sub} posts…`);
     setPill("pill-status", `r/${sub}`, "live");
     const posts = await arcticGet("/api/posts/search", {
       subreddit: sub,
@@ -422,12 +436,13 @@ async function scanArctic(subs, { days, limit, comments }) {
       const it = postToItem(p);
       if (it && !seen.has(it.id)) {
         seen.add(it.id);
+        it.origin = "reddit";
         items.push(it);
       }
     }
     await sleep(350);
     if (comments) {
-      setStatus(`Fetching r/${sub} comments…`);
+      setStatus(`Reddit/Arctic: r/${sub} comments…`);
       const cs = await arcticGet("/api/comments/search", {
         subreddit: sub,
         limit,
@@ -439,15 +454,121 @@ async function scanArctic(subs, { days, limit, comments }) {
         const it = commentToItem(c);
         if (it && !seen.has(it.id)) {
           seen.add(it.id);
+          it.origin = "reddit";
           items.push(it);
         }
       }
       await sleep(350);
     }
   }
-  lastScannedCount = scanned;
-  items.sort((a, b) => b.score + b.num_comments * 2 - (a.score + a.num_comments * 2));
-  return items;
+  return { items, scanned };
+}
+
+function hnItemUrl(hit) {
+  if (hit.url) return hit.url;
+  const id = hit.objectID || hit.story_id;
+  return id ? `https://news.ycombinator.com/item?id=${id}` : "";
+}
+
+function hnToItem(hit, kind) {
+  const title =
+    kind === "comment"
+      ? snip(hit.story_title || hit.title || "(HN comment)", 160)
+      : snip(hit.title || "(HN story)", 160);
+  const body = snip(
+    kind === "comment" ? hit.comment_text || "" : hit.story_text || hit.title || "",
+    4000
+  );
+  // strip simple HTML entities/tags from HN text
+  const cleanBody = body
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+  const blob = `${title}\n${cleanBody}`;
+  const phrases = matchPhrases(blob);
+  // HN is already query-filtered; keep if phrase hit OR body is long enough complaint-ish
+  if (!phrases.length && cleanBody.length < 40 && !matchPhrases(title).length) {
+    // still keep if query-driven and has substance
+    if (cleanBody.length < 20 && title.length < 20) return null;
+  }
+  const id = `hn-${hit.objectID || hit.story_id || title.slice(0, 20)}`;
+  return {
+    id,
+    source: kind === "comment" ? "comment" : "post",
+    origin: "hn",
+    subreddit: "hn",
+    title: kind === "comment" ? `(HN) ${title}` : `(HN) ${title}`,
+    body: cleanBody.slice(0, 4000),
+    score: Number(hit.points || hit.num_comments || 0),
+    num_comments: Number(hit.num_comments || 0),
+    url: hnItemUrl(hit),
+    created_utc: hit.created_at_i || Date.now() / 1000,
+    matched_phrases: phrases.length ? phrases : matchPhrases(title).length ? matchPhrases(title) : ["hn-query"],
+    author: hit.author || "",
+  };
+}
+
+async function scanHN({ days, limit }) {
+  const items = [];
+  const seen = new Set();
+  let scanned = 0;
+  // numericFilters: created_at_i > now-days
+  const after = Math.floor(Date.now() / 1000) - days * 86400;
+  const perQuery = Math.max(5, Math.min(20, Math.floor(limit / 2)));
+  for (const q of HN_QUERIES) {
+    setStatus(`Hacker News: “${q}”…`);
+    setPill("pill-status", "hn", "live");
+    for (const tags of ["story", "comment"]) {
+      const url = new URL(HN_API);
+      url.searchParams.set("query", q);
+      url.searchParams.set("tags", tags);
+      url.searchParams.set("hitsPerPage", String(perQuery));
+      url.searchParams.set("numericFilters", `created_at_i>${after}`);
+      try {
+        const res = await fetch(url.toString());
+        if (!res.ok) continue;
+        const data = await res.json();
+        const hits = data.hits || [];
+        scanned += hits.length;
+        for (const h of hits) {
+          const it = hnToItem(h, tags === "comment" ? "comment" : "story");
+          if (it && !seen.has(it.id)) {
+            seen.add(it.id);
+            items.push(it);
+          }
+        }
+      } catch (e) {
+        console.warn("HN fetch failed", e);
+      }
+      await sleep(120);
+    }
+  }
+  items.sort((a, b) => (b.score || 0) - (a.score || 0));
+  return { items, scanned };
+}
+
+function mergeCandidates(batches) {
+  const seen = new Set();
+  const out = [];
+  let scanned = 0;
+  for (const b of batches) {
+    scanned += b.scanned || 0;
+    for (const it of b.items || []) {
+      if (seen.has(it.id)) continue;
+      seen.add(it.id);
+      out.push(it);
+    }
+  }
+  out.sort(
+    (a, b) =>
+      (b.score || 0) + (b.num_comments || 0) * 2 - ((a.score || 0) + (a.num_comments || 0) * 2)
+  );
+  return { items: out, scanned };
 }
 
 async function classifyItem(item, { base, key, model }) {
@@ -954,26 +1075,52 @@ function renderCockpit({ candidates, pains, ideas, scanned }) {
     samEl.appendChild(note);
   }
 
-  // Source breakdown
+  // Source breakdown (by origin + subreddit)
   const srcEl = $("source-bars");
+  const originCounts = { reddit: 0, hn: 0, demo: 0, other: 0 };
   const srcCounts = {};
   for (const c of candidates) {
+    const o = c.origin || (c.subreddit === "hn" ? "hn" : "reddit");
+    if (originCounts[o] !== undefined) originCounts[o]++;
+    else originCounts.other++;
     const s = c.subreddit || "unknown";
     srcCounts[s] = (srcCounts[s] || 0) + 1;
   }
-  const srcEntries = Object.entries(srcCounts).sort((a, b) => b[1] - a[1]);
   const srcTotal = Math.max(1, candidates.length);
-  if (!srcEntries.length) {
+  if (!candidates.length) {
     srcEl.innerHTML = '<div class="empty-inline">No sources yet.</div>';
   } else {
     srcEl.innerHTML = "";
+    const origins = [
+      ["reddit", "Reddit", "var(--accent)"],
+      ["hn", "Hacker News", "var(--amber)"],
+      ["demo", "Demo", "var(--faint)"],
+    ];
+    for (const [key, label, color] of origins) {
+      if (!originCounts[key]) continue;
+      const pct = Math.round((originCounts[key] / srcTotal) * 100);
+      const row = document.createElement("div");
+      row.className = "sent-row";
+      row.innerHTML = `
+        <span class="lbl" style="width:90px">${label}</span>
+        <div class="bar"><i style="width:${pct}%;background:${color}"></i></div>
+        <span class="pct">${pct}%</span>`;
+      srcEl.appendChild(row);
+    }
+    const note = document.createElement("p");
+    note.className = "note";
+    note.style.marginTop = "8px";
+    note.textContent = "By community:";
+    srcEl.appendChild(note);
+    const srcEntries = Object.entries(srcCounts).sort((a, b) => b[1] - a[1]);
     for (const [sub, n] of srcEntries.slice(0, 8)) {
       const pct = Math.round((n / srcTotal) * 100);
       const row = document.createElement("div");
       row.className = "sent-row";
+      const label = sub === "hn" ? "HN" : `r/${sub}`;
       row.innerHTML = `
-        <span class="lbl" style="width:90px">r/${escapeHtml(sub)}</span>
-        <div class="bar"><i style="width:${pct}%;background:var(--accent)"></i></div>
+        <span class="lbl" style="width:90px">${escapeHtml(label)}</span>
+        <div class="bar"><i style="width:${pct}%;background:var(--accent-hover)"></i></div>
         <span class="pct">${pct}%</span>`;
       srcEl.appendChild(row);
     }
@@ -1081,6 +1228,9 @@ function openIdeaDrawer(idea) {
 function openPainDrawer(p) {
   const blob = `${p.title || ""}\n${p.body || ""}`;
   const full = snip(p.body || p.description || p.title || "", 600);
+  const origin = p.origin || (p.subreddit === "hn" ? "hn" : "reddit");
+  const originLabel = origin === "hn" ? "Hacker News" : origin === "demo" ? "Demo" : "Reddit";
+  const primaryUrl = p.url || "";
   const body = `
     <div class="drawer-section">
       <h3>What they said</h3>
@@ -1089,12 +1239,12 @@ function openPainDrawer(p) {
     <div class="drawer-section">
       <h3>Snapshot</h3>
       <div class="drawer-kv">
-        <div class="box"><div class="k">Subreddit</div><div class="v">r/${escapeHtml(p.subreddit || "?")}</div></div>
+        <div class="box"><div class="k">Source</div><div class="v">${escapeHtml(originLabel)}</div></div>
+        <div class="box"><div class="k">Community</div><div class="v">${origin === "hn" ? "HN" : "r/" + escapeHtml(p.subreddit || "?")}</div></div>
         <div class="box"><div class="k">Type</div><div class="v">${escapeHtml(p.source || "post")}</div></div>
         <div class="box"><div class="k">WTP</div><div class="v">${escapeHtml(p.willingness_to_pay || inferWtp(blob))}</div></div>
         <div class="box"><div class="k">Sentiment</div><div class="v">${escapeHtml(p.sentiment || inferSentiment(blob))}</div></div>
         <div class="box"><div class="k">Severity / score</div><div class="v">${p.severity || "—"} / ${p.score || 0}</div></div>
-        <div class="box"><div class="k">Comments</div><div class="v">${p.num_comments || 0}</div></div>
       </div>
     </div>
     <div class="drawer-section">
@@ -1104,9 +1254,13 @@ function openPainDrawer(p) {
     <div class="drawer-section">
       <h3>Go deeper</h3>
       <div class="drawer-actions">
-        ${p.url ? `<a class="btn" href="${escapeAttr(p.url)}" target="_blank" rel="noopener">Open Reddit thread ↗</a>` : ""}
-        <a class="btn ghost" href="https://www.reddit.com/r/${escapeAttr(p.subreddit || "SaaS")}/" target="_blank" rel="noopener">Browse r/${escapeHtml(p.subreddit || "SaaS")} ↗</a>
-        <a class="btn ghost" href="https://www.reddit.com/search/?q=${encodeURIComponent(p.title || p.description || "")}" target="_blank" rel="noopener">Search similar ↗</a>
+        ${primaryUrl ? `<a class="btn" href="${escapeAttr(primaryUrl)}" target="_blank" rel="noopener">Open original ↗</a>` : ""}
+        ${
+          origin === "hn"
+            ? `<a class="btn ghost" href="https://hn.algolia.com/?q=${encodeURIComponent(p.title || "")}" target="_blank" rel="noopener">Search HN ↗</a>`
+            : `<a class="btn ghost" href="https://www.reddit.com/r/${escapeAttr(p.subreddit || "SaaS")}/" target="_blank" rel="noopener">Browse r/${escapeHtml(p.subreddit || "SaaS")} ↗</a>
+        <a class="btn ghost" href="https://www.reddit.com/search/?q=${encodeURIComponent(p.title || p.description || "")}" target="_blank" rel="noopener">Search similar ↗</a>`
+        }
       </div>
       ${p.description && p.description !== p.title ? `<p class="note" style="margin-top:10px">LLM summary: ${escapeHtml(p.description)}</p>` : ""}
     </div>`;
@@ -1190,11 +1344,24 @@ async function runPipeline(candidates, scanned = 0) {
 }
 
 async function onRunScan() {
-  const subs = [...selected];
-  if (!subs.length) {
-    setStatus("Select at least one subreddit.", "err");
+  const useDemo = $("src-demo")?.checked;
+  const useArctic = $("src-arctic")?.checked;
+  const useHn = $("src-hn")?.checked;
+
+  if (useDemo) {
+    return onRunDemo();
+  }
+  if (!useArctic && !useHn) {
+    setStatus("Pick at least one data source (Reddit and/or Hacker News).", "err");
     return;
   }
+
+  const subs = [...selected];
+  if (useArctic && !subs.length) {
+    setStatus("Select at least one subreddit for the Reddit source (or turn Reddit off).", "err");
+    return;
+  }
+
   $("run-scan").disabled = true;
   $("run-demo").disabled = true;
   updateHeaderPills();
@@ -1203,9 +1370,19 @@ async function onRunScan() {
     const limit = Number($("limit").value || 40);
     const comments = $("comments").value === "1";
     setPill("pill-status", "scanning", "live");
-    const candidates = await scanArctic(subs, { days, limit, comments });
-    setStatus(`Phrase hits: ${candidates.length}. Processing…`);
-    await runPipeline(candidates, lastScannedCount);
+    const batches = [];
+    if (useArctic) {
+      batches.push(await scanArctic(subs, { days, limit, comments }));
+    }
+    if (useHn) {
+      batches.push(await scanHN({ days, limit }));
+    }
+    const merged = mergeCandidates(batches);
+    lastScannedCount = merged.scanned;
+    setStatus(
+      `Sources done · scanned ${merged.scanned} · phrase/query hits ${merged.items.length}. Processing…`
+    );
+    await runPipeline(merged.items, merged.scanned);
   } catch (e) {
     setStatus(String(e.message || e), "err");
     setPill("pill-status", "error", "err");
@@ -1222,6 +1399,7 @@ async function onRunDemo() {
     setPill("pill-status", "demo", "live");
     const candidates = DEMO.map((d) => ({
       ...d,
+      origin: d.origin || "demo",
       matched_phrases: matchPhrases(`${d.title}\n${d.body}`),
       created_utc: Date.now() / 1000,
     })).filter((d) => d.matched_phrases.length);

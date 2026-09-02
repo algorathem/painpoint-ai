@@ -9,7 +9,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from . import demo_data, llm, reddit_arctic, report
+from . import demo_data, hn, llm, reddit_arctic, report
 
 console = Console(stderr=True)
 
@@ -25,7 +25,7 @@ DEFAULT_SUBS = [
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="painpoint-ai",
-        description="Scrape Reddit pain signals → LLM classify → startup ideas",
+        description="Scrape Reddit + HN pain signals → LLM classify → startup ideas",
     )
     p.add_argument(
         "--subs",
@@ -42,9 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--source",
-        choices=["arctic", "demo", "auto"],
-        default=os.environ.get("PAINPOINT_SOURCE", "auto"),
-        help="arctic=Arctic Shift API, demo=fixtures, auto=arctic then demo fallback",
+        choices=["arctic", "hn", "both", "demo", "auto"],
+        default=os.environ.get("PAINPOINT_SOURCE", "both"),
+        help="arctic | hn | both | demo | auto (both, fallback demo)",
     )
     p.add_argument("--no-comments", action="store_true")
     p.add_argument(
@@ -65,25 +65,62 @@ def build_parser() -> argparse.ArgumentParser:
 def collect_items(args: argparse.Namespace) -> tuple[list, str]:
     subs = [s.strip() for s in args.subs.split(",") if s.strip()]
     source = args.source
-    if source in ("arctic", "auto"):
+    if source == "demo":
+        return demo_data.demo_items(), "demo fixtures"
+
+    items: list = []
+    notes: list[str] = []
+
+    want_arctic = source in ("arctic", "both", "auto")
+    want_hn = source in ("hn", "both", "auto")
+
+    if want_arctic:
         try:
-            console.print(f"[cyan]Fetching via Arctic Shift[/] subs={subs} days={args.days}")
-            items = reddit_arctic.scan_subreddits(
+            console.print(f"[cyan]Fetching Reddit via Arctic Shift[/] subs={subs} days={args.days}")
+            arctic_items = reddit_arctic.scan_subreddits(
                 subs,
                 limit_per=args.limit,
                 days=args.days,
                 include_comments=not args.no_comments,
                 phrase_filter=True,
             )
-            if items or source == "arctic":
-                return items, f"arctic | subs={','.join(subs)} | days={args.days}"
-            console.print("[yellow]Arctic returned 0 phrase hits — falling back to demo[/]")
+            items.extend(arctic_items)
+            notes.append(f"arctic={len(arctic_items)}")
         except Exception as e:
             if source == "arctic":
                 raise
-            console.print(f"[yellow]Arctic failed ({e}); using demo fixtures[/]")
-    items = demo_data.demo_items()
-    return items, "demo fixtures"
+            console.print(f"[yellow]Arctic failed ({e})[/]")
+            notes.append("arctic=fail")
+
+    if want_hn:
+        try:
+            console.print(f"[cyan]Fetching Hacker News (Algolia)[/] days={args.days}")
+            hn_items = hn.scan_hn(days=args.days, limit_per_query=max(8, args.limit // 4))
+            items.extend(hn_items)
+            notes.append(f"hn={len(hn_items)}")
+        except Exception as e:
+            if source == "hn":
+                raise
+            console.print(f"[yellow]HN failed ({e})[/]")
+            notes.append("hn=fail")
+
+    # de-dupe by id
+    seen: set[str] = set()
+    uniq = []
+    for it in items:
+        if it.id in seen:
+            continue
+        seen.add(it.id)
+        uniq.append(it)
+
+    if not uniq and source in ("auto", "both"):
+        console.print("[yellow]No live hits — falling back to demo[/]")
+        return demo_data.demo_items(), "demo fixtures (fallback)"
+
+    note = f"sources: {', '.join(notes)} | days={args.days}"
+    if want_arctic:
+        note += f" | subs={','.join(subs)}"
+    return uniq, note
 
 
 def main(argv: list[str] | None = None) -> int:

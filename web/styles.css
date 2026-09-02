@@ -463,6 +463,13 @@ tr.hov:hover td { background: rgba(255, 255, 255, 0.015); }
 .about { margin-top: 16px; }
 .about a { color: var(--accent); }
 
+.src-toggles { display: flex; flex-direction: column; gap: 6px; }
+.src-toggle {
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--body); margin: 0; cursor: pointer;
+}
+.src-toggle input { accent-color: var(--accent-bg); width: auto; }
+
 /* clickable rows */
 tr.hov { cursor: pointer; }
 tr.hov:focus-visible td { outline: 1px solid var(--accent); }

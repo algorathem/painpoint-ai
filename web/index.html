@@ -37,7 +37,14 @@
       </div>
       <div class="card b controls-body">
         <div class="ctrl-col">
-          <div class="sec-label">Subreddits</div>
+          <div class="sec-label">Data sources</div>
+          <div class="src-toggles" id="source-toggles">
+            <label class="src-toggle"><input type="checkbox" id="src-arctic" checked /> Reddit (Arctic Shift)</label>
+            <label class="src-toggle"><input type="checkbox" id="src-hn" checked /> Hacker News</label>
+            <label class="src-toggle"><input type="checkbox" id="src-demo" /> Demo fixtures only</label>
+          </div>
+          <p class="note" style="margin:6px 0 0">HN via Algolia (CORS). Reddit live JSON is often blocked — Arctic is the archive path.</p>
+          <div class="sec-label" style="margin-top:12px">Subreddits <span style="font-weight:400;text-transform:none;letter-spacing:0">(Reddit source)</span></div>
           <div id="preset-row" class="chip-row"></div>
           <div class="add-row">
             <input id="sub-input" type="text" placeholder="add subreddit e.g. climatechange" autocomplete="off" />
