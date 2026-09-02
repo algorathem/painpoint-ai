@@ -1,0 +1,5 @@
+httpx>=0.27
+openai>=1.40
+python-dotenv>=1.0
+rich>=13
+praw>=7.7

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painpoint AI — Reddit → SaaS ideas</title>
+  <meta name="description" content="Select subreddits, scan public Reddit archives for pain points, cluster startup ideas." />
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0f1a'/%3E%3Cpath d='M8 22 L12 10 L16 18 L20 8 L24 22' stroke='%2356e0a0' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <h1>Painpoint AI</h1>
+        <p class="tag">Reddit archives → complaint filter → SaaS idea briefs</p>
+      </div>
+    </div>
+    <div class="top-links">
+      <a href="https://github.com/algorathem/painpoint-ai" target="_blank" rel="noopener">GitHub</a>
+      <a href="#about">About data</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls">
+      <h2>1. Subreddits</h2>
+      <p class="hint">Click presets or type custom names. These are the communities that get scanned.</p>
+      <div id="preset-row" class="chip-row"></div>
+      <div class="add-row">
+        <input id="sub-input" type="text" placeholder="add subreddit e.g. climatechange" autocomplete="off" />
+        <button type="button" id="sub-add" class="btn secondary">Add</button>
+      </div>
+      <div id="selected-subs" class="chip-row selected"></div>
+
+      <h2>2. Scan window</h2>
+      <div class="grid-2">
+        <label>Days back
+          <input id="days" type="number" min="1" max="365" value="30" />
+        </label>
+        <label>Posts per sub
+          <input id="limit" type="number" min="5" max="100" value="40" />
+        </label>
+        <label>Include comments
+          <select id="comments">
+            <option value="1" selected>Yes</option>
+            <option value="0">Posts only</option>
+          </select>
+        </label>
+        <label>Max LLM classify
+          <input id="max-classify" type="number" min="0" max="50" value="15" />
+        </label>
+      </div>
+
+      <h2>3. LLM (optional)</h2>
+      <p class="hint">Phrase filter always runs in-browser. LLM classify needs an OpenAI-compatible key stored only in <em>your</em> browser (never sent to our servers — there are none).</p>
+      <label>API base URL
+        <input id="llm-base" type="url" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label>API key
+        <input id="llm-key" type="password" placeholder="sk-… (localStorage only)" />
+      </label>
+      <label>Model
+        <input id="llm-model" type="text" placeholder="gpt-4o-mini" value="gpt-4o-mini" />
+      </label>
+      <div class="btn-row">
+        <button type="button" id="save-llm" class="btn ghost">Save LLM settings</button>
+        <button type="button" id="clear-llm" class="btn ghost">Clear key</button>
+      </div>
+
+      <div class="btn-row primary-row">
+        <button type="button" id="run-scan" class="btn primary">Run scan</button>
+        <button type="button" id="run-demo" class="btn secondary">Demo fixtures</button>
+      </div>
+      <div id="status" class="status" role="status"></div>
+    </section>
+
+    <section class="panel results">
+      <div class="results-head">
+        <h2>Results</h2>
+        <div class="btn-row">
+          <button type="button" id="export-json" class="btn ghost" disabled>Export JSON</button>
+          <button type="button" id="export-md" class="btn ghost" disabled>Export MD</button>
+        </div>
+      </div>
+      <div id="summary" class="summary empty">Select subreddits and run a scan.</div>
+      <div id="ideas" class="ideas"></div>
+      <div id="pains" class="pains"></div>
+    </section>
+  </main>
+
+  <section id="about" class="about panel">
+    <h2>What is Arctic Shift?</h2>
+    <p><strong>Arctic Shift</strong> (<a href="https://arctic-shift.photon-reddit.com/" target="_blank" rel="noopener">arctic-shift.photon-reddit.com</a>) is a community project that hosts <em>archived</em> public Reddit data with a free HTTP search API. This app uses it as the default source because Reddit’s live site often blocks unauthenticated JSON scrapers.</p>
+    <h3>Is the official Reddit API free?</h3>
+    <ul>
+      <li><strong>Yes, with limits.</strong> You create an app at <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noopener">reddit.com/prefs/apps</a>, get a client id/secret, and call OAuth endpoints free for modest non-commercial use.</li>
+      <li>Free tier is rate-limited; commercial / high-volume use may need Reddit’s paid Data API terms.</li>
+      <li>Unauthenticated <code>reddit.com/*.json</code> scraping is unreliable (often 403) and against spirit of the rules — prefer OAuth or an archive like Arctic Shift.</li>
+    </ul>
+    <h3>Privacy / compliance</h3>
+    <ul>
+      <li>Read-only. No voting, posting, or messaging.</li>
+      <li>Your LLM API key never leaves the browser except to the base URL you set.</li>
+      <li>Respect Reddit and Arctic Shift rate limits; don’t bulk-redistribute corpora.</li>
+    </ul>
+  </section>
+
+  <footer class="foot">
+    <span>Painpoint AI · MIT · algorathem</span>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+output/
+.DS_Store
+dist/
+.wrangler/
+.netlify/

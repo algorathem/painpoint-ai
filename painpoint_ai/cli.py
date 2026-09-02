@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+from rich.console import Console
+from rich.table import Table
+
+from . import demo_data, llm, reddit_arctic, report
+
+console = Console(stderr=True)
+
+DEFAULT_SUBS = [
+    "SaaS",
+    "Entrepreneur",
+    "smallbusiness",
+    "startups",
+    "freelance",
+]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="painpoint-ai",
+        description="Scrape Reddit pain signals → LLM classify → startup ideas",
+    )
+    p.add_argument(
+        "--subs",
+        default=",".join(DEFAULT_SUBS),
+        help="Comma-separated subreddits (default: SaaS-focused set)",
+    )
+    p.add_argument("--days", type=int, default=45, help="Lookback days")
+    p.add_argument("--limit", type=int, default=60, help="Items per subreddit per type")
+    p.add_argument(
+        "--max-classify",
+        type=int,
+        default=30,
+        help="Max candidates to send to LLM",
+    )
+    p.add_argument(
+        "--source",
+        choices=["arctic", "demo", "auto"],
+        default=os.environ.get("PAINPOINT_SOURCE", "auto"),
+        help="arctic=Arctic Shift API, demo=fixtures, auto=arctic then demo fallback",
+    )
+    p.add_argument("--no-comments", action="store_true")
+    p.add_argument(
+        "--out",
+        type=Path,
+        default=Path("output"),
+        help="Output directory",
+    )
+    p.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Phrase filter only (no OpenAI call)",
+    )
+    p.add_argument("--json-stdout", action="store_true", help="Print full JSON to stdout")
+    return p
+
+
+def collect_items(args: argparse.Namespace) -> tuple[list, str]:
+    subs = [s.strip() for s in args.subs.split(",") if s.strip()]
+    source = args.source
+    if source in ("arctic", "auto"):
+        try:
+            console.print(f"[cyan]Fetching via Arctic Shift[/] subs={subs} days={args.days}")
+            items = reddit_arctic.scan_subreddits(
+                subs,
+                limit_per=args.limit,
+                days=args.days,
+                include_comments=not args.no_comments,
+                phrase_filter=True,
+            )
+            if items or source == "arctic":
+                return items, f"arctic | subs={','.join(subs)} | days={args.days}"
+            console.print("[yellow]Arctic returned 0 phrase hits — falling back to demo[/]")
+        except Exception as e:
+            if source == "arctic":
+                raise
+            console.print(f"[yellow]Arctic failed ({e}); using demo fixtures[/]")
+    items = demo_data.demo_items()
+    return items, "demo fixtures"
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    out_dir: Path = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = report.stamp()
+
+    items, note = collect_items(args)
+    console.print(f"[green]Phrase-filtered candidates:[/] {len(items)}")
+
+    # always dump raw candidates
+    report.write_json(
+        out_dir / f"candidates_{stamp}.json",
+        [i.to_dict() for i in items],
+    )
+
+    pains = []
+    ideas = []
+    if args.no_llm:
+        console.print("[yellow]Skipping LLM (--no-llm)[/]")
+    else:
+        client = llm.get_client()
+        console.print(
+            f"[cyan]Classifying up to {args.max_classify} with model={llm.model_name()}[/]"
+        )
+        pains = llm.classify_batch(client, items, max_items=args.max_classify)
+        true_n = sum(1 for p in pains if p.is_pain)
+        console.print(f"[green]Confirmed pains:[/] {true_n}/{len(pains)}")
+        if true_n:
+            console.print("[cyan]Clustering into startup ideas…[/]")
+            ideas = llm.cluster_ideas(client, pains)
+            console.print(f"[green]Ideas:[/] {len(ideas)}")
+
+    report.write_pains_csv(out_dir / f"pains_{stamp}.csv", pains)
+    report.write_json(
+        out_dir / f"pains_{stamp}.json",
+        [p.to_dict() for p in pains],
+    )
+    report.write_json(
+        out_dir / f"ideas_{stamp}.json",
+        [i.to_dict() for i in ideas],
+    )
+    md_path = out_dir / f"report_{stamp}.md"
+    report.write_markdown(
+        md_path, query_note=note, items=items, pains=pains, ideas=ideas
+    )
+    digest_path = out_dir / f"digest_{stamp}.txt"
+    digest = report.write_telegram_digest(digest_path, ideas, pains)
+
+    # console table of ideas
+    if ideas:
+        table = Table(title="Startup ideas")
+        table.add_column("#", style="dim")
+        table.add_column("Score")
+        table.add_column("Title")
+        table.add_column("Who")
+        for i, idea in enumerate(ideas, 1):
+            table.add_row(
+                str(i),
+                f"{idea.score:.0f}",
+                idea.title[:50],
+                idea.who[:30],
+            )
+        console.print(table)
+
+    console.print(f"[bold]Report:[/] {md_path.resolve()}")
+    console.print(f"[bold]Telegram digest:[/] {digest_path.resolve()}")
+    console.print(
+        "Send with: hermes send --to telegram \"$(cat "
+        + str(digest_path)
+        + ")\""
+    )
+
+    payload = {
+        "note": note,
+        "candidates": len(items),
+        "pains": [p.to_dict() for p in pains if p.is_pain],
+        "ideas": [i.to_dict() for i in ideas],
+        "paths": {
+            "report": str(md_path.resolve()),
+            "digest": str(digest_path.resolve()),
+        },
+    }
+    if args.json_stdout:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        # short human summary on stdout for piping
+        print(digest)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
