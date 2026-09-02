@@ -605,7 +605,25 @@ async function arcticGet(path, params) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+    let res;
+    try {
+      res = await fetch(url.toString(), {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+        headers: { Accept: "application/json" },
+      });
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e);
+      // Browser generic: "NetworkError when attempting to fetch resource." / "Failed to fetch"
+      if (attempt < 3) {
+        await sleep(800 * (attempt + 1));
+        continue;
+      }
+      throw new Error(
+        `Reddit/Arctic network blocked (${msg}). Try Demo, or turn Reddit off and use HN + App Store. VPN/adblock can cause this.`
+      );
+    }
     if (res.ok) {
       const data = await res.json();
       return data.data || [];
@@ -618,6 +636,23 @@ async function arcticGet(path, params) {
     throw new Error(`Arctic ${res.status}: ${t.slice(0, 160)}`);
   }
   return [];
+}
+
+async function safeFetchJson(url, opts = {}, label = "API") {
+  let res;
+  try {
+    res = await fetch(url, {
+      mode: "cors",
+      credentials: "omit",
+      ...opts,
+    });
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    throw new Error(
+      `${label} network error: ${msg}. Often CORS (API key host must allow browser origins) or adblock/VPN.`
+    );
+  }
+  return res;
 }
 
 function permalink(p) {
@@ -740,7 +775,7 @@ async function addAppFromInput() {
       limit: "5",
       country: "us",
     })}`;
-    const res = await fetch(url);
+    const res = await safeFetchJson(url, {}, "App Store search");
     if (!res.ok) throw new Error(`iTunes search ${res.status}`);
     const data = await res.json();
     const hit = (data.results || [])[0];
@@ -767,7 +802,11 @@ async function scanAppStore({ pages = 2, keywords = [] } = {}) {
     setPill("pill-status", "ios", "live");
     for (let page = 1; page <= pages; page++) {
       try {
-        const res = await fetch(ITUNES_REVIEWS(appId, page, "us"));
+        const res = await safeFetchJson(
+          ITUNES_REVIEWS(appId, page, "us"),
+          {},
+          `App Store ${name}`
+        );
         if (!res.ok) break;
         const data = await res.json();
         let entries = data?.feed?.entry || [];
@@ -972,7 +1011,7 @@ async function scanHN({ days, limit, keywords = [], problem = "" }) {
       url.searchParams.set("hitsPerPage", String(perQuery));
       url.searchParams.set("numericFilters", `created_at_i>${after}`);
       try {
-        const res = await fetch(url.toString());
+        const res = await safeFetchJson(url.toString(), {}, "Hacker News");
         if (!res.ok) continue;
         const data = await res.json();
         const hits = data.hits || [];
@@ -986,6 +1025,7 @@ async function scanHN({ days, limit, keywords = [], problem = "" }) {
         }
       } catch (e) {
         console.warn("HN fetch failed", e);
+        // one failure shouldn't kill the whole HN scan
       }
       await sleep(120);
     }
@@ -1036,22 +1076,32 @@ BODY:
 ${(item.body || "").slice(0, 3000)}`;
 
   const url = `${base.replace(/\/$/, "")}/chat/completions`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      max_tokens: 400,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      mode: "cors",
+      credentials: "omit",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 400,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      }),
+    });
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    throw new Error(
+      `LLM network/CORS error (${msg}). Browser can only call APIs that allow Origin https://algorathem.github.io. Clear LLM key to use heuristics, or use a CORS-enabled proxy/base.`
+    );
+  }
   if (!res.ok) {
     const t = await res.text();
     throw new Error(`LLM ${res.status}: ${t.slice(0, 200)}`);
@@ -1872,33 +1922,59 @@ async function onRunScan() {
     if (focusBits.length) setStatus(`Focus: ${focusBits.join(" · ")}`);
 
     const batches = [];
+    const sourceErrors = [];
     if (useArctic) {
-      batches.push(
-        await scanArctic(subs, {
-          days,
-          limit,
-          comments,
-          keywords: ctx.keywords,
-        })
-      );
+      try {
+        batches.push(
+          await scanArctic(subs, {
+            days,
+            limit,
+            comments,
+            keywords: ctx.keywords,
+          })
+        );
+      } catch (e) {
+        sourceErrors.push(String(e.message || e));
+        setStatus(`Reddit failed — continuing other sources. ${e.message || e}`, "err");
+      }
     }
     if (useHn) {
-      batches.push(
-        await scanHN({
-          days,
-          limit,
-          keywords: ctx.keywords,
-          problem: ctx.problem,
-        })
-      );
+      try {
+        batches.push(
+          await scanHN({
+            days,
+            limit,
+            keywords: ctx.keywords,
+            problem: ctx.problem,
+          })
+        );
+      } catch (e) {
+        sourceErrors.push(String(e.message || e));
+        setStatus(`HN failed — continuing. ${e.message || e}`, "err");
+      }
     }
     if (useAppStore) {
-      batches.push(await scanAppStore({ pages: 2, keywords: ctx.keywords }));
+      try {
+        batches.push(await scanAppStore({ pages: 2, keywords: ctx.keywords }));
+      } catch (e) {
+        sourceErrors.push(String(e.message || e));
+        setStatus(`App Store failed — continuing. ${e.message || e}`, "err");
+      }
     }
     const merged = mergeCandidates(batches);
     lastScannedCount = merged.scanned;
+    if (!merged.items.length) {
+      const detail = sourceErrors.length
+        ? sourceErrors.join(" | ")
+        : "No hits. Try Demo fixtures, fewer filters, or another source.";
+      setStatus(detail, "err");
+      setPill("pill-status", "error", "err");
+      return;
+    }
     setStatus(
-      `Sources done · scanned ${merged.scanned} · raw hits ${merged.items.length}. Filtering by focus…`
+      `Sources done · scanned ${merged.scanned} · raw hits ${merged.items.length}${
+        sourceErrors.length ? ` · ${sourceErrors.length} source warning(s)` : ""
+      }. Filtering by focus…`
     );
     await runPipeline(merged.items, merged.scanned);
   } catch (e) {
