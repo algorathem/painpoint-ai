@@ -150,6 +150,20 @@ label {
   color: var(--muted);
   margin-bottom: 0.5rem;
 }
+textarea {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  resize: vertical;
+  min-height: 52px;
+}
+textarea:focus {
+  outline: none;
+  border-color: rgba(113, 112, 255, 0.55);
+}
 input, select {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--border);

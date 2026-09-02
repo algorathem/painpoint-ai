@@ -34,6 +34,66 @@ const APP_PRESETS = [
   { id: 461504587, name: "Trello" },
 ];
 
+/** Audience presets seed channels + scoring bias */
+const AUDIENCES = [
+  {
+    id: "saas_founders",
+    label: "SaaS founders",
+    hint: "B2B product builders validating wedges",
+    subs: ["SaaS", "startups", "Entrepreneur"],
+    apps: ["Notion", "Slack", "ChatGPT", "Linear"],
+    keywords: ["churn", "onboarding", "activation", "MRR", "PLG"],
+  },
+  {
+    id: "finance_ops",
+    label: "Finance / controllers",
+    hint: "Close, reconciliation, billing ops",
+    subs: ["Accounting", "bookkeeping", "SaaS", "smallbusiness"],
+    apps: ["QuickBooks", "Xero", "Stripe", "Expensify"],
+    keywords: ["reconciliation", "invoice", "close", "GL", "AR", "AP", "billing"],
+  },
+  {
+    id: "sales_ops",
+    label: "Sales / RevOps",
+    hint: "CRM hygiene, pipeline, enablement",
+    subs: ["sales", "salesforce", "Entrepreneur", "SaaS"],
+    apps: ["Salesforce", "HubSpot", "Gong", "Outreach"],
+    keywords: ["CRM", "pipeline", "quota", "outbound", "lead routing"],
+  },
+  {
+    id: "support_ops",
+    label: "Support / CX",
+    hint: "Ticket load, macros, quality",
+    subs: ["CustomerSuccess", "zendesk", "SaaS", "startups"],
+    apps: ["Zendesk", "Intercom", "Freshdesk"],
+    keywords: ["ticket", "CSAT", "macro", "tier-1", "response time"],
+  },
+  {
+    id: "devops_finops",
+    label: "DevOps / FinOps",
+    hint: "Cost, reliability, cloud ops",
+    subs: ["devops", "kubernetes", "aws", "sre", "programming"],
+    apps: ["Datadog", "PagerDuty", "AWS"],
+    keywords: ["cost spike", "kubernetes", "on-call", "latency", "incident"],
+  },
+  {
+    id: "smb_owners",
+    label: "SMB owners",
+    hint: "Local / multi-location operators",
+    subs: ["smallbusiness", "Entrepreneur", "restaurantowners", "shopify"],
+    apps: ["Square", "Shopify", "Toast", "QuickBooks"],
+    keywords: ["inventory", "payroll", "POS", "scheduling", "cash flow"],
+  },
+  {
+    id: "marketers",
+    label: "Marketers / growth",
+    hint: "Acquisition, attribution, content ops",
+    subs: ["marketing", "PPC", "SEO", "Entrepreneur", "SaaS"],
+    apps: ["HubSpot", "Mailchimp", "Canva", "Google Analytics"],
+    keywords: ["attribution", "CAC", "campaign", "creative", "SEO"],
+  },
+];
+
 const PRESETS = [
   "SaaS",
   "Entrepreneur",
@@ -195,6 +255,10 @@ const selected = new Set(["SaaS", "Entrepreneur", "startups"]);
 const selectedApps = new Map(
   APP_PRESETS.slice(0, 4).map((a) => [a.id, a.name])
 );
+/** @type {Set<string>} */
+const selectedKeywords = new Set();
+/** @type {string|null} */
+let selectedAudience = null;
 
 /** @type {null | object} */
 let lastResult = null;
@@ -208,6 +272,171 @@ function matchPhrases(text) {
   if (hits.length) return hits;
   const soft = SOFT.filter((p) => lowered.includes(p));
   return soft.length >= 2 ? soft : [];
+}
+
+function normalizeKw(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function getKeywords() {
+  const fromChips = [...selectedKeywords];
+  const problem = ($("problem-input")?.value || "").trim();
+  // pull simple tokens from problem statement (len>=4)
+  const fromProblem = problem
+    .toLowerCase()
+    .split(/[^a-z0-9+#.-]+/)
+    .filter((t) => t.length >= 4 && !["with", "that", "this", "have", "from", "they", "them", "want", "need"].includes(t));
+  const aud = AUDIENCES.find((a) => a.id === selectedAudience);
+  const fromAud = aud ? aud.keywords : [];
+  return [...new Set([...fromChips, ...fromAud, ...fromProblem.slice(0, 8)])];
+}
+
+function getDiscoveryContext() {
+  return {
+    problem: ($("problem-input")?.value || "").trim(),
+    keywords: getKeywords(),
+    audience: AUDIENCES.find((a) => a.id === selectedAudience) || null,
+  };
+}
+
+function keywordHits(text, keywords) {
+  const lowered = (text || "").toLowerCase();
+  return (keywords || []).filter((k) => k && lowered.includes(k.toLowerCase()));
+}
+
+function relevanceScore(item, ctx) {
+  const blob = `${item.title || ""}\n${item.body || ""}\n${item.description || ""}`;
+  const kws = ctx.keywords || [];
+  const hits = keywordHits(blob, kws);
+  let score = hits.length * 12;
+  if (ctx.problem) {
+    const tokens = ctx.problem
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 5);
+    score += tokens.filter((t) => blob.toLowerCase().includes(t)).length * 3;
+  }
+  if (ctx.audience) {
+    const sub = String(item.subreddit || "").toLowerCase();
+    if (ctx.audience.subs.some((s) => sub === s.toLowerCase() || sub.includes(s.toLowerCase()))) {
+      score += 8;
+    }
+  }
+  // app store low stars already valuable
+  if (item.origin === "appstore" && (item.rating || item.score || 5) <= 3) score += 6;
+  return score;
+}
+
+function applyDiscoveryFilter(items, ctx) {
+  if (!items.length) return items;
+  const kws = ctx.keywords || [];
+  const hasFocus = kws.length > 0 || !!ctx.problem;
+  const scored = items.map((it) => {
+    const rel = relevanceScore(it, ctx);
+    const kh = keywordHits(`${it.title}\n${it.body}`, kws);
+    return {
+      ...it,
+      relevance: rel,
+      keyword_hits: kh,
+      matched_phrases: [
+        ...new Set([...(it.matched_phrases || []), ...kh]),
+      ],
+    };
+  });
+  scored.sort(
+    (a, b) =>
+      (b.relevance || 0) - (a.relevance || 0) ||
+      (b.score || 0) + (b.num_comments || 0) * 2 - ((a.score || 0) + (a.num_comments || 0) * 2)
+  );
+  if (!hasFocus) return scored;
+  // Keep relevant items; if too few, keep top half by relevance
+  const strong = scored.filter((x) => (x.relevance || 0) > 0 || (x.matched_phrases || []).some((p) => PAIN_PHRASES.includes(p)));
+  if (strong.length >= Math.min(8, scored.length)) return strong;
+  return scored.slice(0, Math.max(12, Math.ceil(scored.length * 0.6)));
+}
+
+function renderKeywords() {
+  const row = $("selected-kws");
+  if (!row) return;
+  row.innerHTML = "";
+  if (!selectedKeywords.size) {
+    row.innerHTML = `<span class="empty-inline">No keywords — general pain scan.</span>`;
+    return;
+  }
+  for (const kw of [...selectedKeywords]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip on";
+    b.innerHTML = `${escapeHtml(kw)}<span class="x">×</span>`;
+    b.addEventListener("click", () => {
+      selectedKeywords.delete(kw);
+      renderKeywords();
+    });
+    row.appendChild(b);
+  }
+}
+
+function addKeywordFromInput() {
+  const raw = ($("kw-input")?.value || "").trim();
+  if (!raw) return;
+  raw.split(",").forEach((part) => {
+    const k = normalizeKw(part);
+    if (k) selectedKeywords.add(k);
+  });
+  $("kw-input").value = "";
+  renderKeywords();
+}
+
+function renderAudiences() {
+  const row = $("audience-row");
+  if (!row) return;
+  row.innerHTML = "";
+  for (const a of AUDIENCES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (selectedAudience === a.id ? " on" : "");
+    b.textContent = a.label;
+    b.title = a.hint;
+    b.addEventListener("click", () => {
+      if (selectedAudience === a.id) {
+        selectedAudience = null;
+      } else {
+        selectedAudience = a.id;
+        applyAudienceSeed(a);
+      }
+      renderAudiences();
+      const hint = $("audience-hint");
+      if (hint) {
+        hint.textContent = selectedAudience
+          ? `${a.hint} · seeded ${a.subs.length} subs + keywords`
+          : "Pick who you sell to — seeds channels + scores relevance.";
+      }
+    });
+    row.appendChild(b);
+  }
+}
+
+function applyAudienceSeed(a) {
+  // merge subs
+  for (const s of a.subs || []) selected.add(s);
+  renderPresets();
+  renderSelected();
+  // merge keywords
+  for (const k of a.keywords || []) selectedKeywords.add(normalizeKw(k));
+  renderKeywords();
+  // try seed apps by name match against presets
+  for (const name of a.apps || []) {
+    const hit = APP_PRESETS.find(
+      (p) => p.name.toLowerCase() === name.toLowerCase()
+    );
+    if (hit) selectedApps.set(hit.id, hit.name);
+  }
+  renderAppPresets();
+  renderSelectedApps();
+  updateHeaderPills();
 }
 
 function inferWtp(text, llmWtp) {
@@ -270,6 +499,15 @@ function updateHeaderPills() {
   );
   const days = Number($("days")?.value || 30);
   setPill("pill-window", `${days}d`, "warn");
+  const ctx = getDiscoveryContext();
+  const bits = [];
+  if (ctx.audience) bits.push(ctx.audience.label);
+  if (ctx.keywords.length) bits.push(`${ctx.keywords.length} kw`);
+  if (ctx.problem) bits.push("problem");
+  // reuse status pill area lightly via pill-status only when idle
+  if (bits.length && ($("pill-status")?.textContent === "idle" || $("pill-status")?.textContent === "ready")) {
+    setPill("pill-status", bits.slice(0, 2).join(" · "), "live");
+  }
 }
 
 function renderPresets() {
@@ -389,13 +627,14 @@ function permalink(p) {
   return p.url || "";
 }
 
-function postToItem(p) {
+function postToItem(p, extraKeywords = []) {
   const title = (p.title || "").trim();
   let body = (p.selftext || "").trim();
   if (body === "[removed]" || body === "[deleted]") body = "";
   const blob = `${title}\n${body}`;
   const phrases = matchPhrases(blob);
-  if (!phrases.length) return null;
+  const kh = keywordHits(blob, extraKeywords);
+  if (!phrases.length && !kh.length) return null;
   return {
     id: String(p.id || title.slice(0, 40)),
     source: "post",
@@ -406,15 +645,17 @@ function postToItem(p) {
     num_comments: Number(p.num_comments || 0),
     url: permalink(p),
     created_utc: Number(p.created_utc || 0),
-    matched_phrases: phrases,
+    matched_phrases: [...new Set([...phrases, ...kh])],
+    keyword_hits: kh,
   };
 }
 
-function commentToItem(c) {
+function commentToItem(c, extraKeywords = []) {
   const body = (c.body || "").trim();
   if (!body || body === "[removed]" || body === "[deleted]") return null;
   const phrases = matchPhrases(body);
-  if (!phrases.length) return null;
+  const kh = keywordHits(body, extraKeywords);
+  if (!phrases.length && !kh.length) return null;
   const linkId = String(c.link_id || "").replace("t3_", "");
   const sub = String(c.subreddit || "");
   const cid = String(c.id || "");
@@ -431,7 +672,8 @@ function commentToItem(c) {
     num_comments: 0,
     url,
     created_utc: Number(c.created_utc || 0),
-    matched_phrases: phrases,
+    matched_phrases: [...new Set([...phrases, ...kh])],
+    keyword_hits: kh,
   };
 }
 
@@ -516,7 +758,7 @@ async function addAppFromInput() {
   }
 }
 
-async function scanAppStore({ pages = 2 } = {}) {
+async function scanAppStore({ pages = 2, keywords = [] } = {}) {
   const items = [];
   const seen = new Set();
   let scanned = 0;
@@ -538,10 +780,13 @@ async function scanAppStore({ pages = 2 } = {}) {
           const content = (e.content?.label || "").trim();
           const blob = `${title}\n${content}`;
           const phrases = matchPhrases(blob);
-          // Prefer pain: 1–3★ always; 4★ only with pain language; skip empty 5★
-          if (rating >= 5 && content.length < 80 && !phrases.length) continue;
-          if (rating >= 4 && !phrases.length && content.length < 40) continue;
+          const kh = keywordHits(blob, keywords);
+          // Prefer pain: 1–3★ always; 4★ only with pain/keyword language
+          if (rating >= 5 && content.length < 80 && !phrases.length && !kh.length) continue;
+          if (rating >= 4 && !phrases.length && !kh.length && content.length < 40) continue;
           if (content.length < 12 && title.length < 8) continue;
+          // If keywords set, prefer matching reviews (still keep very low stars)
+          if (keywords.length && !kh.length && rating >= 3 && !phrases.length) continue;
           const rid = e.id?.label || `${appId}-${title.slice(0, 20)}`;
           const id = `ios-${appId}-${rid}`;
           if (seen.has(id)) continue;
@@ -564,7 +809,8 @@ async function scanAppStore({ pages = 2 } = {}) {
               link ||
               `https://apps.apple.com/us/app/id${appId}?see-all=reviews`,
             created_utc: 0,
-            matched_phrases: phrases.length ? phrases : [`${rating}-star review`],
+            matched_phrases: [...new Set([...(phrases.length ? phrases : [`${rating}-star review`]), ...kh])],
+            keyword_hits: kh,
             author: e.author?.name?.label || "",
             rating,
             app_name: name,
@@ -577,7 +823,6 @@ async function scanAppStore({ pages = 2 } = {}) {
       await sleep(200);
     }
   }
-  // critical reviews first
   items.sort(
     (a, b) =>
       (a.rating || a.score || 5) - (b.rating || b.score || 5) ||
@@ -586,24 +831,39 @@ async function scanAppStore({ pages = 2 } = {}) {
   return { items, scanned };
 }
 
-async function scanArctic(subs, { days, limit, comments }) {
+async function scanArctic(subs, { days, limit, comments, keywords = [] }) {
   const now = Math.floor(Date.now() / 1000);
   const after = now - days * 86400;
   const items = [];
   const seen = new Set();
   let scanned = 0;
+  // Try keyword-filtered pulls first (Arctic selftext), then unfiltered phrase pass
+  const kwList = (keywords || []).slice(0, 4);
   for (const sub of subs) {
     setStatus(`Reddit/Arctic: r/${sub} posts…`);
     setPill("pill-status", `r/${sub}`, "live");
-    const posts = await arcticGet("/api/posts/search", {
-      subreddit: sub,
-      limit,
-      after,
-      before: now,
-    });
+    const baseParams = { subreddit: sub, limit, after, before: now };
+    let posts = [];
+    if (kwList.length) {
+      for (const kw of kwList) {
+        try {
+          const chunk = await arcticGet("/api/posts/search", {
+            ...baseParams,
+            selftext: kw,
+          });
+          posts.push(...chunk);
+          await sleep(250);
+        } catch {
+          /* timeout/rate — fall through */
+        }
+      }
+    }
+    if (!posts.length) {
+      posts = await arcticGet("/api/posts/search", baseParams);
+    }
     scanned += posts.length;
     for (const p of posts) {
-      const it = postToItem(p);
+      const it = postToItem(p, keywords);
       if (it && !seen.has(it.id)) {
         seen.add(it.id);
         it.origin = "reddit";
@@ -621,7 +881,7 @@ async function scanArctic(subs, { days, limit, comments }) {
       });
       scanned += cs.length;
       for (const c of cs) {
-        const it = commentToItem(c);
+        const it = commentToItem(c, keywords);
         if (it && !seen.has(it.id)) {
           seen.add(it.id);
           it.origin = "reddit";
@@ -640,7 +900,7 @@ function hnItemUrl(hit) {
   return id ? `https://news.ycombinator.com/item?id=${id}` : "";
 }
 
-function hnToItem(hit, kind) {
+function hnToItem(hit, kind, extraKeywords = []) {
   const title =
     kind === "comment"
       ? snip(hit.story_title || hit.title || "(HN comment)", 160)
@@ -649,7 +909,6 @@ function hnToItem(hit, kind) {
     kind === "comment" ? hit.comment_text || "" : hit.story_text || hit.title || "",
     4000
   );
-  // strip simple HTML entities/tags from HN text
   const cleanBody = body
     .replace(/<[^>]+>/g, " ")
     .replace(/&quot;/g, '"')
@@ -661,9 +920,8 @@ function hnToItem(hit, kind) {
     .trim();
   const blob = `${title}\n${cleanBody}`;
   const phrases = matchPhrases(blob);
-  // HN is already query-filtered; keep if phrase hit OR body is long enough complaint-ish
-  if (!phrases.length && cleanBody.length < 40 && !matchPhrases(title).length) {
-    // still keep if query-driven and has substance
+  const kh = keywordHits(blob, extraKeywords);
+  if (!phrases.length && !kh.length && cleanBody.length < 40 && !matchPhrases(title).length) {
     if (cleanBody.length < 20 && title.length < 20) return null;
   }
   const id = `hn-${hit.objectID || hit.story_id || title.slice(0, 20)}`;
@@ -672,25 +930,39 @@ function hnToItem(hit, kind) {
     source: kind === "comment" ? "comment" : "post",
     origin: "hn",
     subreddit: "hn",
-    title: kind === "comment" ? `(HN) ${title}` : `(HN) ${title}`,
+    title: `(HN) ${title}`,
     body: cleanBody.slice(0, 4000),
     score: Number(hit.points || hit.num_comments || 0),
     num_comments: Number(hit.num_comments || 0),
     url: hnItemUrl(hit),
     created_utc: hit.created_at_i || Date.now() / 1000,
-    matched_phrases: phrases.length ? phrases : matchPhrases(title).length ? matchPhrases(title) : ["hn-query"],
+    matched_phrases: [
+      ...new Set([
+        ...(phrases.length ? phrases : matchPhrases(title)),
+        ...kh,
+        ...(!phrases.length && !kh.length ? ["hn-query"] : []),
+      ]),
+    ],
+    keyword_hits: kh,
     author: hit.author || "",
   };
 }
 
-async function scanHN({ days, limit }) {
+async function scanHN({ days, limit, keywords = [], problem = "" }) {
   const items = [];
   const seen = new Set();
   let scanned = 0;
-  // numericFilters: created_at_i > now-days
   const after = Math.floor(Date.now() / 1000) - days * 86400;
   const perQuery = Math.max(5, Math.min(20, Math.floor(limit / 2)));
-  for (const q of HN_QUERIES) {
+  const custom = [];
+  if (problem) custom.push(problem.slice(0, 80));
+  for (const k of (keywords || []).slice(0, 6)) {
+    custom.push(`${k} tool`);
+    custom.push(`frustrated ${k}`);
+    custom.push(`looking for ${k}`);
+  }
+  const queries = [...new Set([...custom, ...HN_QUERIES])].slice(0, 14);
+  for (const q of queries) {
     setStatus(`Hacker News: “${q}”…`);
     setPill("pill-status", "hn", "live");
     for (const tags of ["story", "comment"]) {
@@ -706,7 +978,7 @@ async function scanHN({ days, limit }) {
         const hits = data.hits || [];
         scanned += hits.length;
         for (const h of hits) {
-          const it = hnToItem(h, tags === "comment" ? "comment" : "story");
+          const it = hnToItem(h, tags === "comment" ? "comment" : "story", keywords);
           if (it && !seen.has(it.id)) {
             seen.add(it.id);
             items.push(it);
@@ -741,13 +1013,19 @@ function mergeCandidates(batches) {
   return { items: out, scanned };
 }
 
-async function classifyItem(item, { base, key, model }) {
+async function classifyItem(item, { base, key, model }, ctx = null) {
+  const focus = ctx || getDiscoveryContext();
   const system = `You are a B2B SaaS opportunity analyst.
 Return STRICT JSON only:
-{"is_pain":boolean,"description":"one sentence","category":"workflow|automation|integration|reporting|sales|support|compliance|finance|hr|devops|marketing|other","severity":1-5,"willingness_to_pay":"low|medium|high|unknown","sentiment":"frustrated|annoyed|hopeful|neutral","idea_seed":"short product angle","confidence":0-1}
-If not a useful product pain, is_pain=false.`;
-  const user = `type=${item.source}
-subreddit=r/${item.subreddit}
+{"is_pain":boolean,"description":"one sentence concrete problem","category":"workflow|automation|integration|reporting|sales|support|compliance|finance|hr|devops|marketing|other","severity":1-5,"willingness_to_pay":"low|medium|high|unknown","sentiment":"frustrated|annoyed|hopeful|neutral","idea_seed":"short product angle","audience_fit":0-1,"confidence":0-1}
+If not a useful product pain, is_pain=false.
+audience_fit = how well this matches the stated target audience/problem (0-1).`;
+  const user = `TARGET AUDIENCE: ${focus.audience?.label || "general / unspecified"}
+PROBLEM FOCUS: ${focus.problem || "unspecified"}
+KEYWORDS: ${(focus.keywords || []).join(", ") || "none"}
+
+type=${item.source} origin=${item.origin || "?"}
+community=${item.subreddit}
 score=${item.score} comments=${item.num_comments}
 matched=${(item.matched_phrases || []).join("; ")}
 url=${item.url}
@@ -792,6 +1070,7 @@ ${(item.body || "").slice(0, 3000)}`;
     willingness_to_pay: inferWtp(blob, parsed.willingness_to_pay),
     sentiment: parsed.sentiment || inferSentiment(blob),
     idea_seed: parsed.idea_seed || "",
+    audience_fit: Number(parsed.audience_fit || 0),
     confidence: Number(parsed.confidence || 0),
   };
 }
@@ -1486,16 +1765,22 @@ function getLlmConfig() {
 async function runPipeline(candidates, scanned = 0) {
   const maxClassify = Number($("max-classify").value || 0);
   const llm = getLlmConfig();
+  const ctx = getDiscoveryContext();
+  // rank/filter by keywords + audience before classify
+  candidates = applyDiscoveryFilter(candidates, ctx);
   let pains = [];
   let ideas = [];
 
   if (llm && maxClassify > 0 && candidates.length) {
-    const slice = candidates.slice(0, maxClassify);
+    // Prefer high-relevance items for the LLM budget
+    const slice = [...candidates]
+      .sort((a, b) => (b.relevance || 0) - (a.relevance || 0))
+      .slice(0, maxClassify);
     for (let i = 0; i < slice.length; i++) {
       setStatus(`LLM classify ${i + 1}/${slice.length}…`);
       setPill("pill-status", `llm ${i + 1}/${slice.length}`, "live");
       try {
-        pains.push(await classifyItem(slice[i], llm));
+        pains.push(await classifyItem(slice[i], llm, ctx));
       } catch (e) {
         setStatus(String(e.message || e), "err");
         pains = enrichPains(
@@ -1513,6 +1798,13 @@ async function runPipeline(candidates, scanned = 0) {
       }
     }
     pains = enrichPains(pains);
+    // if audience set, down-rank low audience_fit
+    if (ctx.audience) {
+      pains = pains.map((p) => ({
+        ...p,
+        is_pain: p.is_pain && (p.audience_fit === undefined || p.audience_fit >= 0.35 || (p.relevance || 0) >= 8),
+      }));
+    }
     setStatus("Clustering ideas…");
     try {
       ideas = await clusterIdeas(pains, llm);
@@ -1545,6 +1837,7 @@ async function onRunScan() {
   const useArctic = $("src-arctic")?.checked;
   const useHn = $("src-hn")?.checked;
   const useAppStore = $("src-appstore")?.checked;
+  const ctx = getDiscoveryContext();
 
   if (useDemo) {
     return onRunDemo();
@@ -1572,20 +1865,40 @@ async function onRunScan() {
     const limit = Number($("limit").value || 40);
     const comments = $("comments").value === "1";
     setPill("pill-status", "scanning", "live");
+    const focusBits = [];
+    if (ctx.audience) focusBits.push(ctx.audience.label);
+    if (ctx.keywords.length) focusBits.push(`kw:${ctx.keywords.slice(0, 4).join(",")}`);
+    if (ctx.problem) focusBits.push("problem-focus");
+    if (focusBits.length) setStatus(`Focus: ${focusBits.join(" · ")}`);
+
     const batches = [];
     if (useArctic) {
-      batches.push(await scanArctic(subs, { days, limit, comments }));
+      batches.push(
+        await scanArctic(subs, {
+          days,
+          limit,
+          comments,
+          keywords: ctx.keywords,
+        })
+      );
     }
     if (useHn) {
-      batches.push(await scanHN({ days, limit }));
+      batches.push(
+        await scanHN({
+          days,
+          limit,
+          keywords: ctx.keywords,
+          problem: ctx.problem,
+        })
+      );
     }
     if (useAppStore) {
-      batches.push(await scanAppStore({ pages: 2 }));
+      batches.push(await scanAppStore({ pages: 2, keywords: ctx.keywords }));
     }
     const merged = mergeCandidates(batches);
     lastScannedCount = merged.scanned;
     setStatus(
-      `Sources done · scanned ${merged.scanned} · hits ${merged.items.length}. Processing…`
+      `Sources done · scanned ${merged.scanned} · raw hits ${merged.items.length}. Filtering by focus…`
     );
     await runPipeline(merged.items, merged.scanned);
   } catch (e) {
@@ -1657,6 +1970,8 @@ function boot() {
   renderSelected();
   renderAppPresets();
   renderSelectedApps();
+  renderKeywords();
+  renderAudiences();
   loadLlmSettings();
   updateHeaderPills();
   $("sub-add").addEventListener("click", addSubFromInput);
@@ -1666,6 +1981,10 @@ function boot() {
   $("app-add")?.addEventListener("click", () => addAppFromInput());
   $("app-input")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") addAppFromInput();
+  });
+  $("kw-add")?.addEventListener("click", addKeywordFromInput);
+  $("kw-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addKeywordFromInput();
   });
   $("days").addEventListener("change", updateHeaderPills);
   $("save-llm").addEventListener("click", saveLlmSettings);

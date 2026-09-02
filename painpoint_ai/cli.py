@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Comma-separated App Store names or numeric ids (default preset set)",
     )
+    p.add_argument(
+        "--keywords",
+        default="",
+        help="Comma-separated problem keywords (filters + HN queries)",
+    )
     p.add_argument("--no-comments", action="store_true")
     p.add_argument(
         "--out",
